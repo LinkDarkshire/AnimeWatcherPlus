@@ -2,7 +2,7 @@
   <img src="./logo_text.jpeg" alt="AnimeWatcher Plus" width="600">
 </p>
 
-# AnimeWatcherPlus NG
+# AnimeWatcherPlus
 
 Lokale Desktop-Anwendung zur Verwaltung einer Anime-Sammlung.
 
