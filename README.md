@@ -129,10 +129,6 @@ wieder alles zu einem neuen Installer zusammenpackt.
 
 ## Bekannte Lücken in diesem Stand
 
-- AniDB-Metadaten-Fetch benötigt einen bei AniDB registrierten Clientnamen
-  (Einstellung `anidb_client_name`); ohne echte Registrierung bleibt ein
-  identifizierter Anime auf `pending` stehen (Provider-Fehler wird sauber
-  geloggt, kein Crash).
 - Kein CI-Build/Release (nur Lint+Test) — der Installer-Build läuft nur lokal
   per `build.bat`.
 - Kein Code-Signing-Zertifikat (Authenticode): Windows SmartScreen warnt bei
