@@ -1,0 +1,39 @@
+# Python (core/)
+core/.venv/
+core/**/__pycache__/
+core/.pytest_cache/
+core/.ruff_cache/
+core/.mypy_cache/
+core/*.egg-info/
+core/alembic/versions/__pycache__/
+core/build/
+
+# PyInstaller-frozen core sidecar + Tauri release/installer output
+# (built locally via build.bat, never committed -- uploaded to GitHub
+# Releases instead)
+shell/src-tauri/binaries/
+
+# App data created by dev runs (never committed)
+**/AnimeWatcherPlus/library.db*
+**/AnimeWatcherPlus/covers/
+**/AnimeWatcherPlus/logs/
+**/AnimeWatcherPlus/cache/
+
+# Node / frontend (shell/ui/)
+shell/ui/node_modules/
+shell/ui/dist/
+shell/ui/.env.local
+
+# Rust / Tauri (shell/src-tauri/)
+shell/src-tauri/target/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Miscellaneous
+AnimeWatcherPlus_Technisches_Konzept.md
+*.jpeg
