@@ -5,18 +5,20 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { useT } from "@/i18n/I18nContext"
 
 export function ReviewQueue() {
+  const t = useT()
   const { data: items, isLoading } = useReviewQueue()
   const identify = useIdentifyAnime()
   const [manualIds, setManualIds] = useState<Record<number, string>>({})
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 p-4">
-      <h1 className="text-lg font-semibold">Unidentifiziert / Review</h1>
-      {isLoading && <p className="text-sm text-[hsl(var(--muted-foreground))]">Lädt…</p>}
+      <h1 className="text-lg font-semibold">{t("reviewQueue.title")}</h1>
+      {isLoading && <p className="text-sm text-[hsl(var(--muted-foreground))]">{t("common.loading")}</p>}
       {items?.length === 0 && (
-        <p className="text-sm text-[hsl(var(--muted-foreground))]">Nichts zu überprüfen.</p>
+        <p className="text-sm text-[hsl(var(--muted-foreground))]">{t("reviewQueue.empty")}</p>
       )}
 
       <div className="space-y-3">
@@ -33,7 +35,7 @@ export function ReviewQueue() {
                   </p>
                 </div>
                 <Badge variant={item.ident_status === "review" ? "outline" : "destructive"}>
-                  {item.ident_status === "review" ? "Review" : "Keine ID"}
+                  {item.ident_status === "review" ? t("reviewQueue.review") : t("reviewQueue.noId")}
                 </Badge>
               </div>
 
@@ -51,7 +53,7 @@ export function ReviewQueue() {
                         size="sm"
                         onClick={() => identify.mutate({ animeId: item.anime_id, anidbId: c.aid })}
                       >
-                        Übernehmen
+                        {t("common.apply")}
                       </Button>
                     </div>
                   ))}
@@ -60,7 +62,7 @@ export function ReviewQueue() {
 
               <div className="flex items-center gap-2">
                 <Input
-                  placeholder="AniDB-ID manuell eingeben"
+                  placeholder={t("reviewQueue.manualIdPlaceholder")}
                   value={manualIds[item.anime_id] ?? ""}
                   onChange={(e) =>
                     setManualIds((prev) => ({ ...prev, [item.anime_id]: e.target.value }))
@@ -78,7 +80,7 @@ export function ReviewQueue() {
                     })
                   }
                 >
-                  Zuweisen
+                  {t("common.assign")}
                 </Button>
               </div>
             </CardContent>

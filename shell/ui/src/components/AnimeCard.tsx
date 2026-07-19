@@ -1,12 +1,14 @@
 import { Link } from "react-router-dom"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { getStatusPresentation } from "@/lib/animeStatus"
+import { getStatusLabelKey, getStatusVariant } from "@/lib/animeStatus"
 import { useAssetUrl } from "@/lib/useAssetUrl"
+import { useT } from "@/i18n/I18nContext"
 import type { AnimeListItem } from "@/api/types"
 
 export function AnimeCard({ anime }: { anime: AnimeListItem }) {
-  const status = getStatusPresentation(anime.ident_status)
+  const t = useT()
+  const variant = getStatusVariant(anime.ident_status)
   const posterUrl = useAssetUrl(anime.poster_path)
   return (
     <Link to={`/animes/${anime.id}`}>
@@ -21,7 +23,7 @@ export function AnimeCard({ anime }: { anime: AnimeListItem }) {
             />
           ) : (
             <div className="flex h-full items-center justify-center text-xs text-[hsl(var(--muted-foreground))]">
-              Kein Artwork
+              {t("animeCard.noArtwork")}
             </div>
           )}
         </div>
@@ -32,9 +34,9 @@ export function AnimeCard({ anime }: { anime: AnimeListItem }) {
             {anime.media_type && <span>· {anime.media_type}</span>}
           </div>
           <div className="flex flex-wrap gap-1.5 pt-1">
-            <Badge variant={status.variant}>{status.label}</Badge>
-            {anime.missing_on_disk && <Badge variant="destructive">Nicht gefunden</Badge>}
-            {anime.is_duplicate && <Badge variant="outline">Duplikat</Badge>}
+            <Badge variant={variant}>{t(getStatusLabelKey(anime.ident_status))}</Badge>
+            {anime.missing_on_disk && <Badge variant="destructive">{t("animeCard.missing")}</Badge>}
+            {anime.is_duplicate && <Badge variant="outline">{t("animeCard.duplicate")}</Badge>}
           </div>
         </CardContent>
       </Card>

@@ -8,16 +8,18 @@ import { Settings } from "@/pages/Settings"
 import { useLiveEvents } from "@/api/useLiveEvents"
 import { AniDbBanBanner } from "@/components/AniDbBanBanner"
 import { UpdateBanner } from "@/components/UpdateBanner"
-
-const NAV_ITEMS = [
-  { to: "/", label: "Bibliothek", end: true },
-  { to: "/review", label: "Unidentifiziert" },
-  { to: "/folders", label: "Ordner" },
-  { to: "/settings", label: "Einstellungen" },
-]
+import { useT } from "@/i18n/I18nContext"
 
 function App() {
   useLiveEvents()
+  const t = useT()
+
+  const NAV_ITEMS = [
+    { to: "/", label: t("nav.library"), end: true },
+    { to: "/review", label: t("nav.review") },
+    { to: "/folders", label: t("nav.folders") },
+    { to: "/settings", label: t("nav.settings") },
+  ]
 
   return (
     <div className="flex h-screen flex-col">

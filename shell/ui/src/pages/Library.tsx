@@ -5,20 +5,21 @@ import { useAnimes, useTags } from "@/api/hooks"
 import { AnimeCard } from "@/components/AnimeCard"
 import { Input } from "@/components/ui/input"
 import { useContainerWidth } from "@/lib/useContainerWidth"
+import { useT } from "@/i18n/I18nContext"
 
 const CARD_MIN_WIDTH = 170
 const GAP = 16
 const ROW_HEIGHT = 330
 
-const STATUS_OPTIONS = [
-  { value: "", label: "Alle Status" },
-  { value: "identified", label: "Identifiziert" },
-  { value: "pending", label: "In Bearbeitung" },
-  { value: "needs_manual_id", label: "Unidentifiziert" },
-  { value: "review", label: "Review nötig" },
-]
-
 export function Library() {
+  const t = useT()
+  const STATUS_OPTIONS = [
+    { value: "", label: t("library.statusAll") },
+    { value: "identified", label: t("library.statusIdentified") },
+    { value: "pending", label: t("library.statusPending") },
+    { value: "needs_manual_id", label: t("library.statusNeedsManualId") },
+    { value: "review", label: t("library.statusReview") },
+  ]
   const [query, setQuery] = useState("")
   const [status, setStatus] = useState("")
   const [searchParams, setSearchParams] = useSearchParams()
@@ -51,7 +52,7 @@ export function Library() {
     <div className="flex h-full flex-col gap-4 p-4">
       <div className="flex flex-wrap items-center gap-2">
         <Input
-          placeholder="Suche nach Titel…"
+          placeholder={t("library.searchPlaceholder")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           className="max-w-xs"
@@ -72,20 +73,22 @@ export function Library() {
           onChange={(e) => setTag(e.target.value)}
           className="h-9 rounded-md border border-[hsl(var(--border))] bg-transparent px-2 text-sm"
         >
-          <option value="">Alle Tags</option>
-          {tagsData?.map((t) => (
-            <option key={t.id} value={t.name}>
-              {t.name} ({t.anime_count})
+          <option value="">{t("library.allTags")}</option>
+          {tagsData?.map((tag) => (
+            <option key={tag.id} value={tag.name}>
+              {tag.name} ({tag.anime_count})
             </option>
           ))}
         </select>
         {data && (
-          <span className="text-sm text-[hsl(var(--muted-foreground))]">{data.total} Animes</span>
+          <span className="text-sm text-[hsl(var(--muted-foreground))]">
+            {t("library.animeCount", { count: data.total })}
+          </span>
         )}
       </div>
 
-      {isError && <p className="text-sm text-red-500">Bibliothek konnte nicht geladen werden.</p>}
-      {isLoading && <p className="text-sm text-[hsl(var(--muted-foreground))]">Lädt…</p>}
+      {isError && <p className="text-sm text-red-500">{t("library.loadError")}</p>}
+      {isLoading && <p className="text-sm text-[hsl(var(--muted-foreground))]">{t("common.loading")}</p>}
 
       <div
         ref={(node) => {

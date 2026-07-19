@@ -7,8 +7,10 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
 import { useAssetUrl } from "@/lib/useAssetUrl"
+import { useT } from "@/i18n/I18nContext"
 
 export function AnimeDetail() {
+  const t = useT()
   const { id } = useParams()
   const animeId = id ? Number(id) : undefined
   const navigate = useNavigate()
@@ -20,18 +22,18 @@ export function AnimeDetail() {
   const [newAnidbId, setNewAnidbId] = useState("")
   const posterUrl = useAssetUrl(anime?.poster_path)
 
-  if (isLoading) return <p className="p-4 text-sm text-[hsl(var(--muted-foreground))]">Lädt…</p>
-  if (!anime) return <p className="p-4 text-sm">Anime nicht gefunden.</p>
+  if (isLoading) return <p className="p-4 text-sm text-[hsl(var(--muted-foreground))]">{t("common.loading")}</p>
+  if (!anime) return <p className="p-4 text-sm">{t("animeDetail.notFound")}</p>
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 p-4">
       <div className="flex items-center justify-between">
         <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
-          ← Zurück
+          {t("animeDetail.back")}
         </Button>
         {isTauri() && (
           <Button variant="outline" size="sm" onClick={() => openFolder(anime.directory_path)}>
-            Ordner öffnen
+            {t("animeDetail.openFolder")}
           </Button>
         )}
       </div>
@@ -55,23 +57,31 @@ export function AnimeDetail() {
           {(anime.last_metadata_refresh || anime.last_episode_air_date) && (
             <div className="flex flex-wrap items-center gap-2 text-xs text-[hsl(var(--muted-foreground))]">
               {anime.last_metadata_refresh && (
-                <span>Letztes Update: {new Date(anime.last_metadata_refresh).toLocaleDateString()}</span>
+                <span>
+                  {t("animeDetail.lastUpdate", {
+                    date: new Date(anime.last_metadata_refresh).toLocaleDateString(),
+                  })}
+                </span>
               )}
               {anime.last_episode_air_date && (
-                <span>· Letzte Folge: {new Date(anime.last_episode_air_date).toLocaleDateString()}</span>
+                <span>
+                  {t("animeDetail.lastEpisode", {
+                    date: new Date(anime.last_episode_air_date).toLocaleDateString(),
+                  })}
+                </span>
               )}
-              {anime.is_stale && <Badge variant="outline">Veraltet — kein Auto-Rescan</Badge>}
+              {anime.is_stale && <Badge variant="outline">{t("animeDetail.stale")}</Badge>}
             </div>
           )}
           {anime.is_duplicate && (
             <p className="text-sm text-amber-600 dark:text-amber-400">
-              Duplikat — dieselbe AniDB-ID liegt bereits in{" "}
+              {t("animeDetail.duplicatePrefix")}{" "}
               {anime.duplicate_of_anime_id ? (
                 <Link to={`/animes/${anime.duplicate_of_anime_id}`} className="underline">
-                  einem anderen Ordner
+                  {t("animeDetail.anotherFolder")}
                 </Link>
               ) : (
-                "einem anderen Ordner"
+                t("animeDetail.anotherFolder")
               )}
               .
             </p>
@@ -88,16 +98,16 @@ export function AnimeDetail() {
           {anime.anidb_id && (
             <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" variant="outline" onClick={() => refreshMetadata.mutate(anime.id)}>
-                Rescan
+                {t("common.rescan")}
               </Button>
               {!changingId ? (
                 <Button size="sm" variant="ghost" onClick={() => setChangingId(true)}>
-                  AniDB-ID ändern
+                  {t("animeDetail.changeAnidbId")}
                 </Button>
               ) : (
                 <>
                   <Input
-                    placeholder="Neue AniDB-ID"
+                    placeholder={t("animeDetail.newAnidbIdPlaceholder")}
                     value={newAnidbId}
                     onChange={(e) => setNewAnidbId(e.target.value)}
                     className="max-w-[160px]"
@@ -108,8 +118,7 @@ export function AnimeDetail() {
                     onClick={() => {
                       if (
                         confirm(
-                          `AniDB-ID wirklich von ${anime.anidb_id} auf ${newAnidbId} ändern? ` +
-                            "Titel, Tags und Episoden werden dabei komplett neu geladen.",
+                          t("animeDetail.confirmChangeId", { from: anime.anidb_id ?? "", to: newAnidbId }),
                         )
                       ) {
                         identify.mutate({ animeId: anime.id, anidbId: Number(newAnidbId) })
@@ -118,10 +127,10 @@ export function AnimeDetail() {
                       }
                     }}
                   >
-                    Ändern
+                    {t("animeDetail.change")}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setChangingId(false)}>
-                    Abbrechen
+                    {t("common.cancel")}
                   </Button>
                 </>
               )}
@@ -133,7 +142,7 @@ export function AnimeDetail() {
       {(anime.ident_status === "needs_manual_id" || anime.ident_status === "review") && (
         <Card>
           <CardContent className="space-y-3 p-4">
-            <p className="text-sm font-medium">Manuelle Identifikation</p>
+            <p className="text-sm font-medium">{t("animeDetail.manualIdentification")}</p>
             <p className="text-xs text-[hsl(var(--muted-foreground))]">{anime.directory_path}</p>
 
             {anime.review_candidates && anime.review_candidates.length > 0 && (
@@ -141,10 +150,13 @@ export function AnimeDetail() {
                 {anime.review_candidates.map((c) => (
                   <div key={c.aid} className="flex items-center justify-between rounded border p-2 text-sm">
                     <span>
-                      {c.title} <span className="text-[hsl(var(--muted-foreground))]">(AID {c.aid}, Score {c.score.toFixed(0)})</span>
+                      {c.title}{" "}
+                      <span className="text-[hsl(var(--muted-foreground))]">
+                        {t("animeDetail.candidateInfo", { aid: c.aid, score: c.score.toFixed(0) })}
+                      </span>
                     </span>
                     <Button size="sm" onClick={() => identify.mutate({ animeId: anime.id, anidbId: c.aid })}>
-                      Übernehmen
+                      {t("common.apply")}
                     </Button>
                   </div>
                 ))}
@@ -153,7 +165,7 @@ export function AnimeDetail() {
 
             <div className="flex items-center gap-2">
               <Input
-                placeholder="AniDB-ID eingeben"
+                placeholder={t("animeDetail.enterAnidbId")}
                 value={manualId}
                 onChange={(e) => setManualId(e.target.value)}
                 className="max-w-[180px]"
@@ -163,11 +175,11 @@ export function AnimeDetail() {
                 disabled={!manualId || identify.isPending}
                 onClick={() => identify.mutate({ animeId: anime.id, anidbId: Number(manualId) })}
               >
-                Zuweisen
+                {t("common.assign")}
               </Button>
             </div>
             {identify.isError && (
-              <p className="text-xs text-red-500">Identifikation fehlgeschlagen. AniDB-ID prüfen.</p>
+              <p className="text-xs text-red-500">{t("animeDetail.identifyFailed")}</p>
             )}
           </CardContent>
         </Card>

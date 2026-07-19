@@ -9,8 +9,10 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { useT } from "@/i18n/I18nContext"
 
 export function Folders() {
+  const t = useT()
   const { data: folders, isLoading } = useFolders()
   const createFolder = useCreateFolder()
   const deleteFolder = useDeleteFolder()
@@ -31,19 +33,19 @@ export function Folders() {
           setPath("")
           setName("")
         },
-        onError: (err) => setFormError(err instanceof Error ? err.message : "Fehler beim Anlegen"),
+        onError: (err) => setFormError(err instanceof Error ? err.message : t("folders.createError")),
       },
     )
   }
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-4">
-      <h1 className="text-lg font-semibold">Ordner</h1>
+      <h1 className="text-lg font-semibold">{t("nav.folders")}</h1>
 
       <form onSubmit={handleSubmit} className="space-y-2 rounded-lg border p-4">
         <div className="flex gap-2">
           <Input
-            placeholder="Absoluter Pfad, z.B. D:/Anime/Content"
+            placeholder={t("folders.pathPlaceholder")}
             value={path}
             onChange={(e) => setPath(e.target.value)}
             className="flex-1"
@@ -53,18 +55,22 @@ export function Folders() {
             onChange={(e) => setType(e.target.value as "content" | "download")}
             className="h-9 rounded-md border border-[hsl(var(--border))] bg-transparent px-2 text-sm"
           >
-            <option value="content">Content</option>
-            <option value="download">Download</option>
+            <option value="content">{t("folders.typeContent")}</option>
+            <option value="download">{t("folders.typeDownload")}</option>
           </select>
         </div>
-        <Input placeholder="Anzeigename (optional)" value={name} onChange={(e) => setName(e.target.value)} />
+        <Input
+          placeholder={t("folders.namePlaceholder")}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
         <Button type="submit" disabled={!path || createFolder.isPending}>
-          Ordner hinzufügen
+          {t("folders.add")}
         </Button>
         {formError && <p className="text-sm text-red-500">{formError}</p>}
       </form>
 
-      {isLoading && <p className="text-sm text-[hsl(var(--muted-foreground))]">Lädt…</p>}
+      {isLoading && <p className="text-sm text-[hsl(var(--muted-foreground))]">{t("common.loading")}</p>}
 
       <div className="space-y-2">
         {folders?.map((folder) => (
@@ -75,21 +81,23 @@ export function Folders() {
                 <p className="truncate text-xs text-[hsl(var(--muted-foreground))]">{folder.path}</p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <Badge variant="outline">{folder.type === "content" ? "Content" : "Download"}</Badge>
-                {folder.offline && <Badge variant="destructive">Offline</Badge>}
+                <Badge variant="outline">
+                  {folder.type === "content" ? t("folders.typeContent") : t("folders.typeDownload")}
+                </Badge>
+                {folder.offline && <Badge variant="destructive">{t("folders.offline")}</Badge>}
                 <Button size="sm" variant="outline" onClick={() => rescanFolder.mutate(folder.id)}>
-                  Rescan
+                  {t("common.rescan")}
                 </Button>
                 <Button
                   size="sm"
                   variant="destructive"
                   onClick={() => {
-                    if (confirm(`Ordner "${folder.name}" wirklich entfernen?`)) {
+                    if (confirm(t("folders.confirmDelete", { name: folder.name }))) {
                       deleteFolder.mutate(folder.id)
                     }
                   }}
                 >
-                  Entfernen
+                  {t("folders.remove")}
                 </Button>
               </div>
             </CardContent>
