@@ -344,6 +344,89 @@ async def test_identify_falls_back_to_review_if_db_still_rejects_duplicate_anidb
 
 
 @pytest.mark.asyncio
+async def test_change_anidb_id_replaces_old_poster_with_new_one(
+    db_session, tmp_anime_dir, settings, folder_id
+) -> None:
+    """Regression test: re-identifying an already-identified anime with a
+    *different* AniDB ID (the duplicate-resolution "change ID" flow) used to
+    leave the old poster.jpg in place forever, because the poster-download
+    guard only checked "do we already have *a* poster", not "does it belong
+    to the anime we're now claiming this is".
+    """
+    import httpx
+    import respx
+
+    from app.services.artwork import POSTER_FILENAME
+
+    anime_repo = AnimeRepo(db_session)
+    anime = await anime_repo.create_pending(folder_id, str(tmp_anime_dir), tmp_anime_dir.name)
+
+    old_poster_url = "http://img7.anidb.net/pics/anime/old.jpg"
+    new_poster_url = "http://img7.anidb.net/pics/anime/new.jpg"
+    registry = _make_registry(
+        {"1": AnimeMetadata(external_id="1", title="Old Anime"), "2": AnimeMetadata(external_id="2", title="New Anime")},
+        {
+            "1": {"anidb_id": 1, "primary_title": "Old Anime", "poster_url": old_poster_url},
+            "2": {"anidb_id": 2, "primary_title": "New Anime", "poster_url": new_poster_url},
+        },
+    )
+    event_bus = EventBus()
+
+    with respx.mock:
+        respx.get(old_poster_url).mock(return_value=httpx.Response(200, content=b"old-poster-bytes"))
+        await identification.manual_identify(db_session, settings, anime, tmp_anime_dir, 1, registry, event_bus)
+    assert (tmp_anime_dir / POSTER_FILENAME).read_bytes() == b"old-poster-bytes"
+
+    anime = await anime_repo.get(anime.id)
+    with respx.mock:
+        respx.get(new_poster_url).mock(return_value=httpx.Response(200, content=b"new-poster-bytes"))
+        result = await identification.manual_identify(
+            db_session, settings, anime, tmp_anime_dir, 2, registry, event_bus
+        )
+
+    assert result.poster_path == POSTER_FILENAME
+    assert (tmp_anime_dir / POSTER_FILENAME).read_bytes() == b"new-poster-bytes"
+
+
+@pytest.mark.asyncio
+async def test_change_anidb_id_fixes_up_duplicate_flags_on_both_old_and_new_group(
+    db_session, tmp_path, settings, folder_id
+) -> None:
+    """Anime B was flagged as a duplicate of Anime A (both on aid=555). If B
+    turns out to be a misidentification and gets manually reassigned to a
+    different aid, A must no longer be shown as having a duplicate (nothing
+    else shares 555 anymore), and B must not carry over a stale
+    duplicate_of_anime_id pointing at A.
+    """
+    anime_repo = AnimeRepo(db_session)
+    dir_a = tmp_path / "Show Copy A"
+    dir_a.mkdir()
+    dir_b = tmp_path / "Show Copy B"
+    dir_b.mkdir()
+    anime_a = await anime_repo.create_pending(folder_id, str(dir_a), dir_a.name)
+    anime_b = await anime_repo.create_pending(folder_id, str(dir_b), dir_b.name)
+
+    metadata_555 = AnimeMetadata(external_id="555", title="Same Anime")
+    metadata_other = AnimeMetadata(external_id="900", title="Actually Different Anime")
+    registry = _make_registry({"555": metadata_555, "900": metadata_other})
+    event_bus = EventBus()
+
+    await identification.manual_identify(db_session, settings, anime_a, dir_a, 555, registry, event_bus)
+    await identification.manual_identify(db_session, settings, anime_b, dir_b, 555, registry, event_bus)
+    reloaded_b = await anime_repo.get(anime_b.id)
+    assert reloaded_b.is_duplicate is True
+
+    result_b = await identification.manual_identify(
+        db_session, settings, reloaded_b, dir_b, 900, registry, event_bus
+    )
+
+    assert result_b.is_duplicate is False
+    assert result_b.duplicate_of_anime_id is None
+    reloaded_a = await anime_repo.get(anime_a.id)
+    assert reloaded_a.is_duplicate is False
+
+
+@pytest.mark.asyncio
 async def test_identify_syncs_renamed_anidb_tag_instead_of_crashing(
     db_session, tmp_anime_dir, settings, folder_id
 ) -> None:

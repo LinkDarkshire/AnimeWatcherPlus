@@ -82,6 +82,19 @@ export interface ReviewItem {
   candidates: ReviewCandidate[] | null
 }
 
+export interface DuplicateEntry {
+  anime_id: number
+  title: string
+  directory_path: string
+  poster_path: string | null
+}
+
+export interface DuplicateGroup {
+  anidb_id: number
+  title: string
+  entries: DuplicateEntry[]
+}
+
 export interface WsEvent<T = unknown> {
   event: string
   data: T

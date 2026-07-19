@@ -47,7 +47,7 @@ function App() {
       </header>
       <UpdateBanner />
       <AniDbBanBanner />
-      <main className="flex-1 overflow-hidden">
+      <main className="flex-1 overflow-y-auto">
         <Routes>
           <Route path="/" element={<Library />} />
           <Route path="/animes/:id" element={<AnimeDetail />} />

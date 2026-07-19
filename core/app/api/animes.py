@@ -153,6 +153,17 @@ async def get_anime(anime_id: int, session: AsyncSession = Depends(get_db)) -> A
     return _to_detail(anime, threshold_days)
 
 
+@router.delete("/animes/{anime_id}", status_code=204)
+async def delete_anime(anime_id: int, session: AsyncSession = Depends(get_db)) -> None:
+    """Removes one catalog entry -- used to resolve a confirmed duplicate
+    (same anime cataloged from two folders). Does not touch files on disk."""
+    repo = AnimeRepo(session)
+    anime = await repo.get(anime_id)
+    if anime is None:
+        raise HTTPException(status_code=404, detail="Anime nicht gefunden")
+    await repo.delete(anime_id)
+
+
 @public_router.get("/animes/{anime_id}/poster")
 async def get_anime_poster(anime_id: int, session: AsyncSession = Depends(get_db)) -> FileResponse:
     anime = await AnimeRepo(session).get(anime_id)
@@ -232,6 +243,43 @@ async def rescan_all(state: AppState = Depends(get_app_state)) -> RescanAllRespo
     rule-respecting rescan that runs on startup."""
     queued = await state.scanner.enqueue_metadata_rescan(ignore_staleness=True)
     return RescanAllResponse(queued=queued)
+
+
+class DuplicateEntry(BaseModel):
+    anime_id: int
+    title: str
+    directory_path: str
+    poster_path: str | None
+
+
+class DuplicateGroup(BaseModel):
+    anidb_id: int
+    title: str
+    entries: list[DuplicateEntry]
+
+
+@router.get("/duplicates", response_model=list[DuplicateGroup])
+async def list_duplicates(session: AsyncSession = Depends(get_db)) -> list[DuplicateGroup]:
+    """Groups of 2+ catalog entries sharing the same AniDB ID -- for each,
+    the UI offers changing one entry's ID (misidentification) or deleting
+    one entry (confirmed duplicate)."""
+    groups = await AnimeRepo(session).list_duplicate_groups()
+    return [
+        DuplicateGroup(
+            anidb_id=anidb_id,
+            title=entries[0].title,
+            entries=[
+                DuplicateEntry(
+                    anime_id=a.id,
+                    title=a.title,
+                    directory_path=a.directory_path,
+                    poster_path=_poster_url(a),
+                )
+                for a in entries
+            ],
+        )
+        for anidb_id, entries in groups
+    ]
 
 
 review_router = APIRouter(prefix="/api/v1/review-queue", tags=["review-queue"])

@@ -174,3 +174,57 @@ async def test_rescan_all_delegates_to_scanner_ignoring_staleness(client, fake_s
     assert response.status_code == 200
     assert response.json() == {"queued": 3}
     fake_state.scanner.enqueue_metadata_rescan.assert_awaited_once_with(ignore_staleness=True)
+
+
+@pytest.mark.asyncio
+async def test_delete_anime_removes_it(client, db_session, tmp_path) -> None:
+    from app.db.repositories import AnimeRepo, FolderRepo
+
+    folder = await FolderRepo(db_session).create(str(tmp_path), "content", "Content")
+    anime = await AnimeRepo(db_session).create_pending(folder.id, str(tmp_path / "Show A"), "Show A")
+
+    response = await client.delete(f"/api/v1/animes/{anime.id}")
+    assert response.status_code == 204
+
+    assert (await client.get(f"/api/v1/animes/{anime.id}")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_anime_not_found(client) -> None:
+    response = await client.delete("/api/v1/animes/999")
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_duplicates_empty(client) -> None:
+    response = await client.get("/api/v1/duplicates")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_list_duplicates_groups_by_anidb_id(client, db_session, tmp_path) -> None:
+    from app.db.repositories import AnimeRepo, FolderRepo
+
+    folder = await FolderRepo(db_session).create(str(tmp_path), "content", "Content")
+    anime_repo = AnimeRepo(db_session)
+    dir_a = tmp_path / "Show Copy A"
+    dir_a.mkdir()
+    dir_b = tmp_path / "Show Copy B"
+    dir_b.mkdir()
+    anime_a = await anime_repo.create_pending(folder.id, str(dir_a), "Show Copy A")
+    anime_b = await anime_repo.create_pending(folder.id, str(dir_b), "Show Copy B")
+    anime_a.title = "Same Show"
+    anime_a.anidb_id = 123
+    anime_b.title = "Same Show"
+    anime_b.anidb_id = 123
+    await db_session.commit()
+
+    response = await client.get("/api/v1/duplicates")
+    assert response.status_code == 200
+    groups = response.json()
+    assert len(groups) == 1
+    assert groups[0]["anidb_id"] == 123
+    assert groups[0]["title"] == "Same Show"
+    paths = {entry["directory_path"] for entry in groups[0]["entries"]}
+    assert paths == {str(dir_a), str(dir_b)}

@@ -148,6 +148,7 @@ async def _finalize_identification(
     # every attribute on every object in the session, and re-accessing
     # anime.id afterwards would trigger a lazy DB reload outside a valid
     # greenlet context (MissingGreenlet), not just return the cached value.
+    previous_anidb_id = anime.anidb_id  # for the poster-refresh + duplicate-group fixup below
     try:
         anime = await anime_repo.apply_identification(
             anime_id,
@@ -195,8 +196,14 @@ async def _finalize_identification(
     anime.review_candidates = None
     await session.commit()
 
+    id_changed = previous_anidb_id is not None and previous_anidb_id != anidb_id
+    await anime_repo.recompute_duplicate_flags(anidb_id)
+    if id_changed:
+        await anime_repo.recompute_duplicate_flags(previous_anidb_id)
+
     has_poster = await _write_artwork_and_aniinfo(
-        session, provider_registry, provider_name, anime, anime_dir, anidb_id, match_score
+        session, provider_registry, provider_name, anime, anime_dir, anidb_id, match_score,
+        force_poster_refresh=id_changed,
     )
 
     nfo.write_tvshow_nfo(
@@ -244,10 +251,18 @@ async def _write_artwork_and_aniinfo(
     anime_dir: Path,
     anidb_id: int,
     match_score: float | None,
+    *,
+    force_poster_refresh: bool = False,
 ) -> bool:
     """Best-effort: a failure here must never break identification itself
     (NFA-12-style isolation), so every error is caught and logged.
     Returns True if a poster was (already, or newly) saved locally.
+
+    `force_poster_refresh` is set when the AniDB ID just changed (e.g. via
+    the "change AniDB ID" duplicate-resolution flow): the previously saved
+    poster belongs to the *old* identity, so it must be deleted and
+    re-downloaded rather than left in place just because *a* poster already
+    exists.
     """
     if provider_name is None:
         return False
@@ -269,7 +284,10 @@ async def _write_artwork_and_aniinfo(
 
     poster_saved = bool(anime.poster_path)
     poster_url = full_info.get("poster_url")
-    if poster_url and not poster_saved:
+    if poster_url and (not poster_saved or force_poster_refresh):
+        if force_poster_refresh:
+            (anime_dir / artwork.POSTER_FILENAME).unlink(missing_ok=True)
+            poster_saved = False
         try:
             async with httpx.AsyncClient() as client:
                 poster_filename = await artwork.download_poster(client, poster_url, anime_dir)
@@ -279,6 +297,10 @@ async def _write_artwork_and_aniinfo(
         if poster_filename:
             await anime_repo.set_poster_path(anime.id, poster_filename)
             poster_saved = True
+        elif force_poster_refresh:
+            # Old poster was already deleted and the re-download failed --
+            # don't leave the DB pointing at a file that no longer exists.
+            await anime_repo.set_poster_path(anime.id, None)
 
     try:
         artwork.write_aniinfo_json(

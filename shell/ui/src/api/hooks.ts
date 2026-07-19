@@ -4,6 +4,7 @@ import { toQueryString, type AnimeFilters } from "@/lib/animeFilters"
 import type {
   AnimeDetail,
   AnimeListResponse,
+  DuplicateGroup,
   Folder,
   ReviewItem,
   TagSummary,
@@ -91,7 +92,27 @@ export function useIdentifyAnime() {
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["animes"] })
       queryClient.invalidateQueries({ queryKey: ["review-queue"] })
+      queryClient.invalidateQueries({ queryKey: ["duplicates"] })
       queryClient.invalidateQueries({ queryKey: ["anime", variables.animeId] })
+    },
+  })
+}
+
+export function useDuplicates() {
+  return useQuery({
+    queryKey: ["duplicates"],
+    queryFn: () => api.get<DuplicateGroup[]>("/api/v1/duplicates"),
+  })
+}
+
+export function useDeleteAnime() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (animeId: number) => api.del<void>(`/api/v1/animes/${animeId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["duplicates"] })
+      queryClient.invalidateQueries({ queryKey: ["animes"] })
+      queryClient.invalidateQueries({ queryKey: ["review-queue"] })
     },
   })
 }

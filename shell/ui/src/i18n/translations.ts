@@ -11,7 +11,7 @@ export type Language = keyof typeof LANGUAGES
 
 const de = {
   "nav.library": "Bibliothek",
-  "nav.review": "Unidentifiziert",
+  "nav.review": "Unidentifiziert/Doubles",
   "nav.folders": "Ordner",
   "nav.settings": "Einstellungen",
 
@@ -67,6 +67,13 @@ const de = {
   "reviewQueue.noId": "Keine ID",
   "reviewQueue.manualIdPlaceholder": "AniDB-ID manuell eingeben",
 
+  "duplicates.title": "Dopplung",
+  "duplicates.empty": "Keine Dopplungen gefunden.",
+  "duplicates.changeId": "ID ändern",
+  "duplicates.delete": "Löschen",
+  "duplicates.confirmDelete":
+    'Eintrag für "{path}" wirklich löschen? Nur der Katalog-Eintrag wird entfernt, die Dateien bleiben unangetastet.',
+
   "settings.rescanTitle": "Automatischer Metadaten-Rescan",
   "settings.rescanDescription":
     "Beim Start werden alle identifizierten Serien erneut bei AniDB abgefragt (neue Folgen, geänderte Metadaten) — außer solchen, deren letzte bekannte Folge schon länger als die Schwelle unten zurückliegt (wahrscheinlich abgeschlossen oder abgebrochen, es kommt also vermutlich keine neue Folge mehr).",
@@ -104,7 +111,7 @@ export type TranslationKey = keyof typeof de
 
 const en: Record<TranslationKey, string> = {
   "nav.library": "Library",
-  "nav.review": "Unidentified",
+  "nav.review": "Unidentified/Duplicates",
   "nav.folders": "Folders",
   "nav.settings": "Settings",
 
@@ -159,6 +166,13 @@ const en: Record<TranslationKey, string> = {
   "reviewQueue.review": "Review",
   "reviewQueue.noId": "No ID",
   "reviewQueue.manualIdPlaceholder": "Enter AniDB ID manually",
+
+  "duplicates.title": "Duplicates",
+  "duplicates.empty": "No duplicates found.",
+  "duplicates.changeId": "Change ID",
+  "duplicates.delete": "Delete",
+  "duplicates.confirmDelete":
+    'Really delete the entry for "{path}"? Only the catalog entry is removed, the files stay untouched.',
 
   "settings.rescanTitle": "Automatic metadata rescan",
   "settings.rescanDescription":

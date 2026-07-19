@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -117,11 +117,82 @@ class AnimeRepo:
             await self.session.commit()
 
     async def delete(self, anime_id: int) -> None:
+        """Removes one anime's catalog entry (e.g. resolving a confirmed
+        duplicate) -- does NOT touch the files on disk, only the DB rows.
+
+        Mirrors FolderRepo.delete's reasoning: a bare `DELETE FROM anime`
+        violates FK constraints the moment child rows exist, and ORM cascade
+        triggers lazy-loads outside a valid greenlet context. Explicit,
+        dependency-ordered deletes sidestep both. `duplicate_of_anime_id` is
+        a self-referential FK, so any other anime row pointing at this one
+        must be cleared first too, then the rest of that duplicate group
+        (if any) gets its flags recomputed from scratch.
+        """
+        anime = await self.session.get(Anime, anime_id)
+        if anime is None:
+            return
+        anidb_id = anime.anidb_id
+
+        for table in (LocalEpisode, ExpectedEpisode, AnimeTag, AnimeProviderId, JobLog):
+            await self.session.execute(delete(table).where(table.anime_id == anime_id))
+        await self.session.execute(
+            update(Anime)
+            .where(Anime.duplicate_of_anime_id == anime_id)
+            .values(duplicate_of_anime_id=None, is_duplicate=False)
+        )
         await self.session.execute(
             text("DELETE FROM anime_search_fts WHERE anime_id = :aid"), {"aid": anime_id}
         )
         await self.session.execute(delete(Anime).where(Anime.id == anime_id))
         await self.session.commit()
+
+        await self.recompute_duplicate_flags(anidb_id)
+
+    async def recompute_duplicate_flags(self, anidb_id: int | None) -> None:
+        """Re-derives is_duplicate/duplicate_of_anime_id for every anime
+        sharing `anidb_id`, from scratch. Needed after anything that changes
+        a duplicate group's membership (deleting one entry, or re-identifying
+        one entry to a different AniDB ID) -- apply_identification only ever
+        updates the single row it's identifying, which can leave sibling rows
+        pointing at a now-stale duplicate_of_anime_id."""
+        if anidb_id is None:
+            return
+        result = await self.session.execute(
+            select(Anime).where(Anime.anidb_id == anidb_id).order_by(Anime.id)
+        )
+        group = list(result.scalars().all())
+        if len(group) <= 1:
+            for a in group:
+                a.is_duplicate = False
+                a.duplicate_of_anime_id = None
+        else:
+            primary, *rest = group
+            primary.is_duplicate = False
+            primary.duplicate_of_anime_id = None
+            for a in rest:
+                a.is_duplicate = True
+                a.duplicate_of_anime_id = primary.id
+        await self.session.commit()
+
+    async def list_duplicate_groups(self) -> list[tuple[int, list[Anime]]]:
+        """Groups of 2+ anime sharing the same (non-null) AniDB ID."""
+        dup_ids_result = await self.session.execute(
+            select(Anime.anidb_id)
+            .where(Anime.anidb_id.is_not(None))
+            .group_by(Anime.anidb_id)
+            .having(func.count(Anime.id) > 1)
+        )
+        dup_ids = [row[0] for row in dup_ids_result.all()]
+        if not dup_ids:
+            return []
+
+        result = await self.session.execute(
+            select(Anime).where(Anime.anidb_id.in_(dup_ids)).order_by(Anime.anidb_id, Anime.id)
+        )
+        groups: dict[int, list[Anime]] = {}
+        for anime in result.scalars().all():
+            groups.setdefault(anime.anidb_id, []).append(anime)
+        return list(groups.items())
 
     async def _sync_fts(self, anime: Anime) -> None:
         await self.session.execute(
