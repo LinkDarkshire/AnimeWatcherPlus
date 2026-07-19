@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import type { Update } from "@tauri-apps/plugin-updater"
 import { isTauri } from "@/api/client"
 import { Button } from "@/components/ui/button"
+import { useT } from "@/i18n/I18nContext"
 
 type UpdateState =
   | { status: "idle" }
@@ -13,6 +14,7 @@ type UpdateState =
  * once on startup; only ever active inside the Tauri desktop shell -- there
  * is no browser-dev-mode equivalent. */
 export function UpdateBanner() {
+  const t = useT()
   const [state, setState] = useState<UpdateState>({ status: "idle" })
   const [update, setUpdate] = useState<Update | null>(null)
 
@@ -46,7 +48,7 @@ export function UpdateBanner() {
       const { relaunch } = await import("@tauri-apps/plugin-process")
       await relaunch()
     } catch (err) {
-      setState({ status: "error", message: err instanceof Error ? err.message : "Update fehlgeschlagen" })
+      setState({ status: "error", message: err instanceof Error ? err.message : t("updateBanner.failed") })
     }
   }
 
@@ -54,15 +56,17 @@ export function UpdateBanner() {
     <div className="border-b border-sky-300 bg-sky-50 px-4 py-2 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-200">
       {state.status === "available" && (
         <div className="flex items-center justify-between gap-4">
-          <span>Update auf Version {state.version} verfügbar.</span>
+          <span>{t("updateBanner.available", { version: state.version })}</span>
           <Button size="sm" onClick={handleInstall}>
-            Jetzt installieren & neu starten
+            {t("updateBanner.installButton")}
           </Button>
         </div>
       )}
-      {state.status === "downloading" && <span>Update wird heruntergeladen und installiert…</span>}
+      {state.status === "downloading" && <span>{t("updateBanner.downloading")}</span>}
       {state.status === "error" && (
-        <span className="text-red-600 dark:text-red-400">Update fehlgeschlagen: {state.message}</span>
+        <span className="text-red-600 dark:text-red-400">
+          {t("updateBanner.failedWithMessage", { message: state.message })}
+        </span>
       )}
     </div>
   )

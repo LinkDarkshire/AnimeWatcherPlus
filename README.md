@@ -2,6 +2,8 @@
   <img src="./logo_text.jpeg" alt="AnimeWatcher Plus" width="600">
 </p>
 
+<p align="center"><a href="./README.en.md">English version</a></p>
+
 # AnimeWatcherPlus
 
 Lokale Desktop-Anwendung zur Verwaltung einer Anime-Sammlung.
@@ -30,9 +32,9 @@ Lokale Desktop-Anwendung zur Verwaltung einer Anime-Sammlung.
 - **Strukturiertes Logging:** rotierende JSON-Logdatei (`logs/core.log`,
   10 MB × 5 Dateien) zusätzlich zur Konsolenausgabe — zum Beilegen bei
   Problemen, unabhängig davon ob die Konsole gerade sichtbar war.
-- **Installer & Auto-Update:** per `build.bat` gebauter, signierter
-  NSIS-Installer; die App prüft beim Start gegen GitHub Releases und bietet
-  Updates per Klick an (siehe [Installer bauen](#installer-bauen-release)).
+- **Installer & Auto-Update:** signierter NSIS-Installer; die App prüft beim
+  Start gegen GitHub Releases und bietet Updates per Klick an (siehe
+  [Installer bauen](#installer-bauen-release)).
 
 Offene Meilensteine aus dem technischen Konzept: fehlende Episoden (M5),
 Sprachanalyse (M6), Regel-Engine/Auto-Sort (M7), Download-Framework (M8),
@@ -98,39 +100,59 @@ nie committet):
 cargo tauri signer generate -w "%USERPROFILE%\.awp-secrets\awp-updater.key" --ci
 ```
 
-Danach ein einziger Befehl im Repo-Root:
+Danach für jeden Release die folgenden drei Schritte (Core, Frontend, Shell
+sind unabhängig — hat sich z.B. nur das Backend geändert, reicht es, nur
+Schritt 1 erneut laufen zu lassen, bevor `cargo tauri build` in Schritt 3
+wieder alles zu einem neuen Installer zusammenpackt):
+
+**1. Python-Core per PyInstaller zu einer Onefile-Exe bauen** (Onefile, weil
+Alembic seine Migrationsskripte als echte Dateien zur Laufzeit braucht):
 
 ```bash
-build.bat
+cd core
+.venv\Scripts\python.exe -m PyInstaller core.spec --distpath ..\shell\src-tauri\binaries --noconfirm
+move /y ..\shell\src-tauri\binaries\core.exe ..\shell\src-tauri\binaries\core-x86_64-pc-windows-msvc.exe
 ```
 
-Das baut nacheinander: den Python-Core per PyInstaller zu einer
-`core-x86_64-pc-windows-msvc.exe` (Onefile, landet in
-`shell/src-tauri/binaries/` — dieser Ordner wird nie committet, siehe
-`.gitignore`), das Frontend, und zuletzt per `cargo tauri build` einen
-signierten NSIS-Installer unter
-`shell/src-tauri/target/release/bundle/nsis/`. `build.bat` findet den
-Signierschlüssel automatisch am obigen Pfad (überschreibbar per
-`TAURI_SIGNING_PRIVATE_KEY`-Env-Var).
+`shell/src-tauri/binaries/` wird nie committet (siehe `.gitignore`).
+
+**2. Frontend bauen:**
+
+```bash
+cd shell/ui
+npm run build
+```
+
+**3. Signierten NSIS-Installer bauen:**
+
+```bash
+cd shell
+set TAURI_SIGNING_PRIVATE_KEY=%USERPROFILE%\.awp-secrets\awp-updater.key
+set CI=true
+cargo tauri build
+```
+
+`CI=true` ist nötig, weil `cargo tauri build` beim Signieren sonst versucht,
+interaktiv nach einem Passwort für den Schlüssel zu fragen, und sich in einer
+nicht-interaktiven Shell aufhängt (bekannte Tauri-Eigenheit, auch bei einem
+passwortlos erzeugten Schlüssel) — mit `CI=true` wird das übersprungen.
+
+Ergebnis landet unter `shell/src-tauri/target/release/bundle/nsis/`: der
+`.exe`-Installer und die dazugehörige `.exe.sig`-Signaturdatei.
 
 Release-Upload zu GitHub ist ein manueller Schritt (kein `gh`-CLI auf dieser
-Maschine vorausgesetzt): den `.exe`-Installer, die zugehörige `.exe.sig`-Datei
-und eine `latest.json` (Version, Notes, `pub_date`,
+Maschine vorausgesetzt): den `.exe`-Installer, die `.exe.sig`-Datei und eine
+`latest.json` (Version, Notes, `pub_date`,
 `platforms.windows-x86_64.signature`/`.url`) als Release-Assets unter
 `github.com/LinkDarkshire/AnimeWatcherPlus/releases/new` hochladen. Die
 installierte App prüft `releases/latest/download/latest.json` automatisch
 beim Start und bietet ein Update per Klick an (signiert, stille Installation,
 Neustart).
 
-**Nur einzelne Komponenten neu bauen:** Core, Frontend und Shell sind
-unabhängig — hat sich z.B. nur das Backend geändert, muss vor dem nächsten
-Release nur der PyInstaller-Schritt neu laufen, bevor `cargo tauri build`
-wieder alles zu einem neuen Installer zusammenpackt.
-
 ## Bekannte Lücken in diesem Stand
 
-- Kein CI-Build/Release (nur Lint+Test) — der Installer-Build läuft nur lokal
-  per `build.bat`.
+- Kein CI-Build/Release (nur Lint+Test) — der Installer-Build läuft nur lokal,
+  manuell (siehe [Installer bauen](#installer-bauen-release)).
 - Kein Code-Signing-Zertifikat (Authenticode): Windows SmartScreen warnt bei
   Erst-Install und bei jedem Auto-Update, das ist unabhängig vom
   Updater-Signierschlüssel und nur mit einem kostenpflichtigen Zertifikat
