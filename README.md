@@ -2,6 +2,8 @@
   <img src="./logo_text.jpeg" alt="AnimeWatcher Plus" width="600">
 </p>
 
+<p align="center"><a href="./README.en.md">English version</a></p>
+
 # AnimeWatcherPlus
 
 Lokale Desktop-Anwendung zur Verwaltung einer Anime-Sammlung.
@@ -149,10 +151,6 @@ Neustart).
 
 ## Bekannte Lücken in diesem Stand
 
-- AniDB-Metadaten-Fetch benötigt einen bei AniDB registrierten Clientnamen
-  (Einstellung `anidb_client_name`); ohne echte Registrierung bleibt ein
-  identifizierter Anime auf `pending` stehen (Provider-Fehler wird sauber
-  geloggt, kein Crash).
 - Kein CI-Build/Release (nur Lint+Test) — der Installer-Build läuft nur lokal,
   manuell (siehe [Installer bauen](#installer-bauen-release)).
 - Kein Code-Signing-Zertifikat (Authenticode): Windows SmartScreen warnt bei
