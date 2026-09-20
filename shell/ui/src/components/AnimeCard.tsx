@@ -35,7 +35,14 @@ export function AnimeCard({ anime }: { anime: AnimeListItem }) {
           </div>
           <div className="flex flex-wrap gap-1.5 pt-1">
             <Badge variant={variant}>{t(getStatusLabelKey(anime.ident_status))}</Badge>
-            {anime.missing_on_disk && <Badge variant="destructive">{t("animeCard.missing")}</Badge>}
+            {anime.completeness &&
+              (anime.completeness.missing === 0 ? (
+                <Badge variant="outline">{t("animeCard.complete")}</Badge>
+              ) : (
+                <Badge variant="destructive">
+                  {t("animeCard.missingCount", { count: anime.completeness.missing })}
+                </Badge>
+              ))}
             {anime.is_duplicate && <Badge variant="outline">{t("animeCard.duplicate")}</Badge>}
           </div>
         </CardContent>

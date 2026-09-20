@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { DuplicatesSection } from "@/components/DuplicatesSection"
+import { SortQueueSection } from "@/components/SortQueueSection"
+import { RenameQueueSection } from "@/components/RenameQueueSection"
 import { useT } from "@/i18n/I18nContext"
 
 export function ReviewQueue() {
@@ -89,6 +91,8 @@ export function ReviewQueue() {
         ))}
       </div>
 
+      <SortQueueSection />
+      <RenameQueueSection />
       <DuplicatesSection />
     </div>
   )

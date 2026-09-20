@@ -11,7 +11,17 @@ from alembic.config import Config
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import animes, folders, settings_api, tags, ws
+from app.api import (
+    animes,
+    folders,
+    maintenance,
+    pending_actions,
+    rename_queue,
+    settings_api,
+    sort_queue,
+    tags,
+    ws,
+)
 from app.api.animes import review_router
 from app.api.errors import register_error_handlers
 from app.auth import require_token
@@ -19,9 +29,11 @@ from app.config import get_settings
 from app.logging_config import configure_logging
 from app.providers.anidb import AniDBProvider
 from app.providers.base import ProviderRegistry
+from app.services import pending_actions as pending_actions_service
 from app.services.jobs import EventBus, JobQueue
 from app.services.scanner import ScannerService
 from app.services.titledump import ensure_title_dump_imported
+from app.services.titles import run_startup_title_backfill
 from app.state import AppState
 
 # A PyInstaller --onefile build extracts itself (plus --add-data, i.e.
@@ -57,6 +69,9 @@ async def lifespan(app: FastAPI):
     configure_logging(settings)
 
     event_bus = EventBus()
+    # Must be wired before anything can publish: the nav badge's cached total
+    # goes stale the moment an anime is discovered/identified/sorted/removed.
+    pending_actions_service.register_invalidation(event_bus)
     job_queue = JobQueue(event_bus)
     provider_registry = ProviderRegistry()
     anidb_provider = AniDBProvider(settings)
@@ -74,6 +89,9 @@ async def lifespan(app: FastAPI):
 
     job_queue.start()
     job_queue.enqueue("titledump_import", lambda: ensure_title_dump_imported(settings))
+    # Before the scans and rescans: they read and write the same titles, and
+    # the rename queue must never be computed from the pre-variant ones.
+    job_queue.enqueue("title_backfill", lambda: run_startup_title_backfill(settings, event_bus))
     await scanner.start()
     logger.info("core_started", data_dir=str(settings.data_dir))
 
@@ -107,6 +125,10 @@ def create_app() -> FastAPI:
     app.include_router(review_router, dependencies=[protected])
     app.include_router(tags.router, dependencies=[protected])
     app.include_router(settings_api.router, dependencies=[protected])
+    app.include_router(sort_queue.router, dependencies=[protected])
+    app.include_router(rename_queue.router, dependencies=[protected])
+    app.include_router(pending_actions.router, dependencies=[protected])
+    app.include_router(maintenance.router, dependencies=[protected])
     app.include_router(ws.router)
 
     return app

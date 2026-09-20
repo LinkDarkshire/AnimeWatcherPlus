@@ -36,6 +36,12 @@ class AnimeMetadata(BaseModel):
     external_id: str
     title: str
     original_title: str | None = None
+    # Language-tagged variants, kept alongside the already-resolved `title` so
+    # the app can re-resolve a display/folder name from the user's preference
+    # order without re-fetching from the provider.
+    title_main: str | None = None
+    title_en: str | None = None
+    title_ja: str | None = None
     alt_titles: list[str] = []
     year: int | None = None
     media_type: str | None = None

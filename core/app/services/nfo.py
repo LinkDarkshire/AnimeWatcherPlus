@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -88,7 +89,16 @@ def write_tvshow_nfo(
 
 def write_episode_nfo(
     episode_file: Path, *, title: str | None, ep_number: str, anidb_id: int
-) -> Path:
+) -> bool:
+    """Per-episode `.nfo` next to the video file (FA-09). Returns True if the
+    file was actually written.
+
+    Unlike tvshow.nfo there is one of these per episode, so a library-wide
+    metadata refresh would otherwise mean tens of thousands of small writes
+    over a network share on every pass. The content is rendered first and
+    compared against what's already there, turning an unchanged library into
+    reads only.
+    """
     nfo_path = episode_file.with_suffix(".nfo")
     root = ET.Element("episodedetails")
     _set_child_text(root, "title", title or f"Episode {ep_number}")
@@ -98,8 +108,19 @@ def write_episode_nfo(
     uid_el.text = str(anidb_id)
     tree = ET.ElementTree(root)
     ET.indent(tree, space="  ")
-    tree.write(nfo_path, encoding="utf-8", xml_declaration=True)
-    return nfo_path
+
+    buffer = BytesIO()
+    tree.write(buffer, encoding="utf-8", xml_declaration=True)
+    rendered = buffer.getvalue()
+
+    try:
+        if nfo_path.read_bytes() == rendered:
+            return False
+    except OSError:
+        pass  # missing or unreadable -> write it
+
+    nfo_path.write_bytes(rendered)
+    return True
 
 
 def _set_child_text(root: ET.Element, tag: str, text: str) -> None:

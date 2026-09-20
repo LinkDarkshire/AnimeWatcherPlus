@@ -45,19 +45,11 @@ class Settings(BaseSettings):
         return self.data_dir / "library.db"
 
     @property
-    def covers_dir(self) -> Path:
-        return self.data_dir / "covers"
-
-    @property
     def logs_dir(self) -> Path:
         return self.data_dir / "logs"
 
-    @property
-    def titledump_path(self) -> Path:
-        return self.data_dir / "anime-titles.xml.gz"
-
     def ensure_dirs(self) -> None:
-        for d in (self.data_dir, self.covers_dir, self.logs_dir):
+        for d in (self.data_dir, self.logs_dir):
             d.mkdir(parents=True, exist_ok=True)
 
 

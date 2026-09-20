@@ -24,9 +24,6 @@ class MetadataProvider(ABC):
     @abstractmethod
     async def fetch(self, external_id: str) -> AnimeMetadata | None: ...
 
-    async def map_from_anidb(self, anidb_id: int) -> str | None:  # optional
-        return None
-
     async def get_full_info(self, external_id: str) -> dict | None:  # optional
         """Everything the provider knows about this anime, beyond the lean
         AnimeMetadata contract -- used for the aniinfo.json sidecar. Providers

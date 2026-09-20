@@ -6,6 +6,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
+import { AnimePendingActionsSection } from "@/components/AnimePendingActionsSection"
+import { EpisodeSection } from "@/components/EpisodeSection"
 import { useAssetUrl } from "@/lib/useAssetUrl"
 import { useT } from "@/i18n/I18nContext"
 
@@ -138,6 +140,10 @@ export function AnimeDetail() {
           )}
         </div>
       </div>
+
+      <AnimePendingActionsSection animeId={anime.id} />
+
+      {anime.anidb_id && <EpisodeSection animeId={anime.id} />}
 
       {(anime.ident_status === "needs_manual_id" || anime.ident_status === "review") && (
         <Card>

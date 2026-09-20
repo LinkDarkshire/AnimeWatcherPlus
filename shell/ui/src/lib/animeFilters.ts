@@ -4,6 +4,7 @@ export interface AnimeFilters {
   year?: number
   type?: string
   status?: string
+  missing?: boolean
   page?: number
   size?: number
 }
@@ -15,6 +16,7 @@ export function toQueryString(filters: AnimeFilters): string {
   if (filters.year) params.set("year", String(filters.year))
   if (filters.type) params.set("type", filters.type)
   if (filters.status) params.set("status", filters.status)
+  if (filters.missing) params.set("missing", "true")
   params.set("page", String(filters.page ?? 1))
   params.set("size", String(filters.size ?? 60))
   return params.toString()

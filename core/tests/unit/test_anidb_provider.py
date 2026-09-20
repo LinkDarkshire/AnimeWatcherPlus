@@ -54,6 +54,19 @@ def test_parse_anime_xml_prefers_english_official_title() -> None:
     assert metadata.episodes[0].ep_number == "1"
 
 
+def test_parse_anime_xml_exposes_all_three_title_variants() -> None:
+    """The variants have to reach AnimeMetadata untouched, not just the one
+    title the provider's own default order happens to pick -- re-resolving a
+    display or folder name from the user's configured order later must not
+    need another AniDB request."""
+    metadata = _parse_anime_xml(SAMPLE_ANIME_XML.encode("utf-8"), aid=1)
+
+    assert metadata is not None
+    assert metadata.title_main == "Seikai no Monshou"
+    assert metadata.title_en == "Crest of the Stars"  # "official" beats the "short" CotS
+    assert metadata.title_ja == "星界の紋章"
+
+
 def test_parse_anime_xml_falls_back_to_main_title_without_official() -> None:
     xml = """<?xml version="1.0" encoding="UTF-8"?>
     <anime id="2" restricted="false">
@@ -68,6 +81,79 @@ def test_parse_anime_xml_falls_back_to_main_title_without_official() -> None:
     assert metadata.title == "Some Movie"
     assert metadata.original_title == "Some Movie"
     assert metadata.alt_titles == []
+
+
+def test_parse_anime_xml_prefers_english_synonym_over_japanese_official() -> None:
+    """Regression test for a real-world case (AID 16686): AniDB sometimes has
+    no English title tagged "official" at all -- only "synonym" -- while the
+    Japanese-script title *is* tagged "official". The old fallback chain
+    (`_pick_title(ttype="official")`, ignoring language) picked that raw
+    Japanese script as the primary title, even though a perfectly good
+    English synonym and a romanized (x-jat) main title both existed. English
+    must win regardless of its `type`, as long as no higher-priority English
+    title exists.
+    """
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <anime id="16686" restricted="true">
+        <type>OVA</type>
+        <titles>
+            <title xml:lang="x-jat" type="main">Abandon -100 Nuki Shinai to Derarenai Fushigi na Kyoushitsu-</title>
+            <title xml:lang="ja" type="official">Abandon -100ヌキしないと出られない不思議な教室-</title>
+            <title xml:lang="en" type="synonym">Abandon: 100 Nuki Shinai to Derarenai Fushigi na Kyoushitsu</title>
+        </titles>
+    </anime>
+    """
+    metadata = _parse_anime_xml(xml.encode("utf-8"), aid=16686)
+    assert metadata is not None
+    assert metadata.title == "Abandon: 100 Nuki Shinai to Derarenai Fushigi na Kyoushitsu"
+    assert metadata.original_title == "Abandon -100 Nuki Shinai to Derarenai Fushigi na Kyoushitsu-"
+
+
+def test_parse_anime_xml_prefers_romanized_japanese_over_script_without_english() -> None:
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <anime id="4" restricted="false">
+        <type>TV Series</type>
+        <titles>
+            <title xml:lang="ja" type="official">日本語のタイトル</title>
+            <title xml:lang="x-jat" type="main">Nihongo no Taitoru</title>
+        </titles>
+    </anime>
+    """
+    metadata = _parse_anime_xml(xml.encode("utf-8"), aid=4)
+    assert metadata is not None
+    assert metadata.title == "Nihongo no Taitoru"
+
+
+def test_parse_anime_xml_picks_preferred_language_per_episode_title() -> None:
+    """Episode titles get the same language cascade -- the old code just took
+    `ep_el.find("title")` (first child in document order), which for an
+    episode listing Japanese before English would silently show raw kanji.
+    """
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <anime id="5" restricted="false">
+        <type>TV Series</type>
+        <titles>
+            <title xml:lang="en" type="official">Test Show</title>
+        </titles>
+        <episodes>
+            <episode id="1">
+                <epno type="1">1</epno>
+                <title xml:lang="ja">日本語のエピソード</title>
+                <title xml:lang="x-jat">Nihongo no Episōdo</title>
+                <title xml:lang="en">Awakening</title>
+            </episode>
+            <episode id="2">
+                <epno type="1">2</epno>
+                <title xml:lang="ja">二番目のエピソード</title>
+                <title xml:lang="x-jat">Nibanme no Episōdo</title>
+            </episode>
+        </episodes>
+    </anime>
+    """
+    metadata = _parse_anime_xml(xml.encode("utf-8"), aid=5)
+    assert metadata is not None
+    assert metadata.episodes[0].title == "Awakening"
+    assert metadata.episodes[1].title == "Nibanme no Episōdo"
 
 
 def test_parse_anime_xml_falls_back_to_placeholder_without_any_title() -> None:
@@ -168,3 +254,34 @@ def test_parse_full_anime_info_covers_ratings_creators_relations_and_episode_det
 
 def test_parse_full_anime_info_invalid_xml_returns_none() -> None:
     assert parse_full_anime_info(b"not xml", aid=1) is None
+
+
+def test_cached_title_variants_reads_the_response_cache(tmp_path) -> None:
+    """The backfill source for anime that the staleness rule keeps out of
+    rescans: whatever AniDB returned last time, however old."""
+    from app.config import Settings
+    from app.providers.anidb import cache_dir, cached_title_variants
+
+    settings = Settings(data_dir=tmp_path)
+    cache_dir(settings).mkdir(parents=True)
+    (cache_dir(settings) / "1.xml").write_text(SAMPLE_ANIME_XML, encoding="utf-8")
+
+    assert cached_title_variants(settings, 1) == {
+        "main": "Seikai no Monshou",
+        "en": "Crest of the Stars",
+        "ja": "星界の紋章",
+    }
+
+
+def test_cached_title_variants_ignores_missing_and_error_responses(tmp_path) -> None:
+    from app.config import Settings
+    from app.providers.anidb import cache_dir, cached_title_variants
+
+    settings = Settings(data_dir=tmp_path)
+    cache_dir(settings).mkdir(parents=True)
+    (cache_dir(settings) / "2.xml").write_text("<error>Anime not found</error>", encoding="utf-8")
+    (cache_dir(settings) / "3.xml").write_text("not xml", encoding="utf-8")
+
+    assert cached_title_variants(settings, 1) is None  # not cached
+    assert cached_title_variants(settings, 2) is None
+    assert cached_title_variants(settings, 3) is None

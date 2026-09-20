@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Any
+
 import structlog
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -19,10 +22,16 @@ _TITLES = {
 }
 
 
-def _problem(status_code: int, detail: str, type_: str, errors: list | None = None) -> JSONResponse:
-    body = {"type": type_, "title": _TITLES.get(status_code, "Fehler"), "detail": detail}
+def _problem(
+    status_code: int, detail: str, type_: str, errors: Sequence[Any] | None = None
+) -> JSONResponse:
+    body: dict[str, Any] = {
+        "type": type_,
+        "title": _TITLES.get(status_code, "Fehler"),
+        "detail": detail,
+    }
     if errors is not None:
-        body["errors"] = errors
+        body["errors"] = list(errors)
     return JSONResponse(status_code=status_code, content=body)
 
 

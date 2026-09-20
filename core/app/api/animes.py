@@ -9,9 +9,10 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_app_state, get_db
+from app.db.completeness import Completeness, CompletenessRepo
 from app.db.models import Anime
-from app.db.repositories import AnimeRepo
-from app.services import identification
+from app.db.repositories import AnimeRepo, LocalEpisodeRepo
+from app.services import identification, sorter
 from app.services.artwork import POSTER_FILENAME
 from app.services.settings_store import get_staleness_config
 from app.services.staleness import is_stale, last_episode_air_date
@@ -34,6 +35,14 @@ class TagOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CompletenessOut(BaseModel):
+    """FA-10: "vollständig / n fehlend" on the library card."""
+
+    expected: int
+    present: int
+    missing: int
+
+
 class AnimeListItem(BaseModel):
     id: int
     anidb_id: int | None
@@ -44,9 +53,9 @@ class AnimeListItem(BaseModel):
     ident_status: str
     match_score: float | None
     episode_count_expected: int | None
-    missing_on_disk: bool
     is_duplicate: bool
     duplicate_of_anime_id: int | None
+    completeness: CompletenessOut | None
 
 
 class AnimeListResponse(BaseModel):
@@ -84,7 +93,16 @@ def _poster_url(anime: Anime) -> str | None:
     return f"/api/v1/animes/{anime.id}/poster"
 
 
-def _to_list_item(anime: Anime) -> AnimeListItem:
+def _to_completeness(value: Completeness | None) -> CompletenessOut | None:
+    """None for anime the comparison can't say anything about (not yet
+    identified, or a provider entry with no numbered episodes at all) -- the
+    card then shows no completeness badge rather than a misleading "0 of 0"."""
+    if value is None or value.expected == 0:
+        return None
+    return CompletenessOut(expected=value.expected, present=value.present, missing=value.missing)
+
+
+def _to_list_item(anime: Anime, completeness: Completeness | None = None) -> AnimeListItem:
     return AnimeListItem(
         id=anime.id,
         anidb_id=anime.anidb_id,
@@ -95,9 +113,9 @@ def _to_list_item(anime: Anime) -> AnimeListItem:
         ident_status=anime.ident_status,
         match_score=anime.match_score,
         episode_count_expected=anime.episode_count_expected,
-        missing_on_disk=anime.missing_on_disk,
         is_duplicate=anime.is_duplicate,
         duplicate_of_anime_id=anime.duplicate_of_anime_id,
+        completeness=_to_completeness(completeness),
     )
 
 
@@ -133,15 +151,29 @@ async def list_animes(
     year: int | None = None,
     type: str | None = None,
     status: str | None = None,
+    missing: bool = False,
     page: int = 1,
     size: int = 50,
     session: AsyncSession = Depends(get_db),
 ) -> AnimeListResponse:
     repo = AnimeRepo(session)
     items, total = await repo.search(
-        query=query, year=year, media_type=type, tag=tag, status_filter=status, page=page, size=size
+        query=query,
+        year=year,
+        media_type=type,
+        tag=tag,
+        status_filter=status,
+        page=page,
+        size=size,
+        missing_only=missing,
     )
-    return AnimeListResponse(total=total, page=page, items=[_to_list_item(a) for a in items])
+    # Two grouped queries for the whole page, not one per card.
+    completeness = await CompletenessRepo(session).for_animes([a.id for a in items])
+    return AnimeListResponse(
+        total=total,
+        page=page,
+        items=[_to_list_item(a, completeness.get(a.id)) for a in items],
+    )
 
 
 @router.get("/animes/{anime_id}", response_model=AnimeDetail)
@@ -175,6 +207,219 @@ async def get_anime_poster(anime_id: int, session: AsyncSession = Depends(get_db
     return FileResponse(poster_file, media_type="image/jpeg")
 
 
+class MissingEpisodeOut(BaseModel):
+    ep_number: str
+    title: str | None
+    air_date: dt.date | None
+
+
+class MissingEpisodesResponse(BaseModel):
+    anime_id: int
+    expected: int
+    present: int
+    missing: list[MissingEpisodeOut]
+
+
+@router.get("/animes/{anime_id}/missing-episodes", response_model=MissingEpisodesResponse)
+async def get_missing_episodes(
+    anime_id: int, session: AsyncSession = Depends(get_db)
+) -> MissingEpisodesResponse:
+    """FA-12, per series: which episodes of the provider's list have no file
+    on disk. Specials/credits/trailers are excluded -- see
+    db.completeness._is_plain_number."""
+    if await AnimeRepo(session).get(anime_id) is None:
+        raise HTTPException(status_code=404, detail="Anime nicht gefunden")
+    repo = CompletenessRepo(session)
+    counts = (await repo.for_animes([anime_id]))[anime_id]
+    missing = await repo.missing_for_anime(anime_id)
+    return MissingEpisodesResponse(
+        anime_id=anime_id,
+        expected=counts.expected,
+        present=counts.present,
+        missing=[
+            MissingEpisodeOut(ep_number=m.ep_number, title=m.title, air_date=m.air_date)
+            for m in missing
+        ],
+    )
+
+
+class IncompleteAnime(BaseModel):
+    anime_id: int
+    title: str
+    poster_path: str | None
+    year: int | None
+    media_type: str | None
+    expected: int
+    present: int
+    missing: int
+
+
+class MissingEpisodesOverview(BaseModel):
+    total: int
+    page: int
+    items: list[IncompleteAnime]
+
+
+@router.get("/missing-episodes", response_model=MissingEpisodesOverview)
+async def list_missing_episodes(
+    page: int = 1, size: int = 50, session: AsyncSession = Depends(get_db)
+) -> MissingEpisodesOverview:
+    """FA-12, global view. Paginated like the library -- on a large catalog
+    this list can itself run into the hundreds."""
+    repo = CompletenessRepo(session)
+    rows, total = await repo.list_incomplete(page=page, size=size)
+    counts = await repo.for_animes([anime.id for anime, _ in rows])
+    return MissingEpisodesOverview(
+        total=total,
+        page=page,
+        items=[
+            IncompleteAnime(
+                anime_id=anime.id,
+                title=anime.title,
+                poster_path=_poster_url(anime),
+                year=anime.year,
+                media_type=anime.media_type,
+                expected=counts[anime.id].expected,
+                present=counts[anime.id].present,
+                missing=missing_count,
+            )
+            for anime, missing_count in rows
+        ],
+    )
+
+
+class LocalEpisodeOut(BaseModel):
+    id: int
+    file_name: str
+    ep_number: str | None
+    manual_override: bool
+
+
+@router.get("/animes/{anime_id}/episodes", response_model=list[LocalEpisodeOut])
+async def list_local_episodes(
+    anime_id: int, session: AsyncSession = Depends(get_db)
+) -> list[LocalEpisodeOut]:
+    """The files actually on disk with the episode number parsed from each
+    filename -- the input for the manual correction below."""
+    if await AnimeRepo(session).get(anime_id) is None:
+        raise HTTPException(status_code=404, detail="Anime nicht gefunden")
+    episodes = await LocalEpisodeRepo(session).by_anime(anime_id)
+    episodes.sort(key=lambda e: (e.ep_number is None, _sort_key(e.ep_number), e.file_path))
+    return [
+        LocalEpisodeOut(
+            id=e.id,
+            file_name=Path(e.file_path).name,
+            ep_number=e.ep_number,
+            manual_override=e.manual_override,
+        )
+        for e in episodes
+    ]
+
+
+def _sort_key(ep_number: str | None) -> tuple[int, str]:
+    """Numeric episodes in numeric order, anything else alphabetically after."""
+    if ep_number is not None and ep_number.isdigit():
+        return (int(ep_number), "")
+    return (10**9, ep_number or "")
+
+
+class EpisodeNumberUpdate(BaseModel):
+    # null clears the manual correction and lets the next scan re-parse the
+    # filename again.
+    ep_number: str | None
+
+
+@router.patch("/animes/{anime_id}/episodes/{episode_id}", response_model=LocalEpisodeOut)
+async def update_local_episode_number(
+    anime_id: int,
+    episode_id: int,
+    payload: EpisodeNumberUpdate,
+    session: AsyncSession = Depends(get_db),
+) -> LocalEpisodeOut:
+    """Manual episode-number correction (concept Kap. 14: filename parsing
+    can't cover every release naming scheme)."""
+    repo = LocalEpisodeRepo(session)
+    episode = await repo.get(episode_id)
+    if episode is None or episode.anime_id != anime_id:
+        raise HTTPException(status_code=404, detail="Episode nicht gefunden")
+    ep_number = payload.ep_number.strip() if payload.ep_number else None
+    if ep_number is not None and not ep_number.isdigit():
+        raise HTTPException(status_code=422, detail="Episodennummer muss eine Zahl sein")
+
+    updated = await repo.set_manual_ep_number(episode_id, ep_number)
+    assert updated is not None
+    return LocalEpisodeOut(
+        id=updated.id,
+        file_name=Path(updated.file_path).name,
+        ep_number=updated.ep_number,
+        manual_override=updated.manual_override,
+    )
+
+
+class FileRenameOut(BaseModel):
+    current: str
+    target: str
+
+
+class RenameProposalOut(BaseModel):
+    current_dir_name: str
+    target_dir_name: str
+    dir_needs_rename: bool
+    file_renames: list[FileRenameOut]
+
+
+class SortProposalOut(BaseModel):
+    episode_count: int
+    matched_count: int
+    suggested_target_folder_id: int | None
+
+
+class AnimePendingActions(BaseModel):
+    """Everything on the Abfragen page that concerns this one series, so it
+    can be resolved from the series itself. Identification (review) and
+    duplicates are already part of the detail response; these are the two
+    that weren't."""
+
+    rename: RenameProposalOut | None
+    sort: SortProposalOut | None
+
+
+@router.get("/animes/{anime_id}/pending-actions", response_model=AnimePendingActions)
+async def get_anime_pending_actions(
+    anime_id: int, session: AsyncSession = Depends(get_db)
+) -> AnimePendingActions:
+    anime = await AnimeRepo(session).get(anime_id)
+    if anime is None:
+        raise HTTPException(status_code=404, detail="Anime nicht gefunden")
+
+    rename = await sorter.rename_proposal_for(session, anime)
+    sort = await sorter.sort_proposal_for(session, anime)
+    return AnimePendingActions(
+        rename=(
+            RenameProposalOut(
+                current_dir_name=rename.current_dir_name,
+                target_dir_name=rename.target_dir_name,
+                dir_needs_rename=rename.dir_needs_rename,
+                file_renames=[
+                    FileRenameOut(current=current, target=target)
+                    for current, target in rename.file_renames
+                ],
+            )
+            if rename
+            else None
+        ),
+        sort=(
+            SortProposalOut(
+                episode_count=sort.episode_count,
+                matched_count=sort.matched_count,
+                suggested_target_folder_id=sort.suggested_target_folder_id,
+            )
+            if sort
+            else None
+        ),
+    )
+
+
 class IdentifyRequest(BaseModel):
     anidb_id: int
 
@@ -202,7 +447,11 @@ async def identify_anime_manually(
         )
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    # Re-read: identification may have merged this entry into an existing
+    # copy (auto-sort) and deleted the row this request started from.
     anime = await repo.get(anime_id)
+    if anime is None:
+        raise HTTPException(status_code=404, detail="Anime nicht gefunden")
     threshold_days, _ = await get_staleness_config(session)
     return _to_detail(anime, threshold_days)
 

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from xml.etree import ElementTree as ET
+
+from app.services import nfo
 from app.services.nfo import read_anidb_id_from_nfo, write_tvshow_nfo
 
 
@@ -60,3 +63,48 @@ def test_write_tvshow_nfo_replaces_stale_anidb_uniqueid(tmp_anime_dir) -> None:
         tmp_anime_dir, anidb_id=2, title="B", original_title=None, year=None, description=None, tags=[]
     )
     assert read_anidb_id_from_nfo(tmp_anime_dir) == 2
+
+
+def test_write_episode_nfo_creates_jellyfin_episodedetails(tmp_path) -> None:
+    episode = tmp_path / "Show - S01E05 - Awakening.mkv"
+    episode.write_bytes(b"video")
+
+    written = nfo.write_episode_nfo(episode, title="Awakening", ep_number="5", anidb_id=17222)
+
+    nfo_path = tmp_path / "Show - S01E05 - Awakening.nfo"
+    assert written is True
+    root = ET.parse(nfo_path).getroot()
+    assert root.tag == "episodedetails"
+    assert root.findtext("title") == "Awakening"
+    assert root.findtext("episode") == "5"
+    uid = root.find("uniqueid")
+    assert uid.get("type") == "anidb"
+    assert uid.text == "17222"
+
+
+def test_write_episode_nfo_falls_back_to_generic_title(tmp_path) -> None:
+    episode = tmp_path / "ep.mkv"
+    episode.write_bytes(b"video")
+
+    nfo.write_episode_nfo(episode, title=None, ep_number="7", anidb_id=1)
+
+    assert ET.parse(tmp_path / "ep.nfo").getroot().findtext("title") == "Episode 7"
+
+
+def test_write_episode_nfo_skips_rewriting_identical_content(tmp_path) -> None:
+    """There is one of these per episode, so a library-wide refresh would
+    otherwise mean tens of thousands of pointless writes over a network share
+    on every pass."""
+    episode = tmp_path / "ep.mkv"
+    episode.write_bytes(b"video")
+    assert nfo.write_episode_nfo(episode, title="A", ep_number="1", anidb_id=1) is True
+
+    nfo_path = tmp_path / "ep.nfo"
+    mtime_before = nfo_path.stat().st_mtime_ns
+
+    assert nfo.write_episode_nfo(episode, title="A", ep_number="1", anidb_id=1) is False
+    assert nfo_path.stat().st_mtime_ns == mtime_before
+
+    # A changed episode title does get written through.
+    assert nfo.write_episode_nfo(episode, title="B", ep_number="1", anidb_id=1) is True
+    assert ET.parse(nfo_path).getroot().findtext("title") == "B"
