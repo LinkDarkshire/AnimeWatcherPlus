@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_app_state, get_db
 from app.db.repositories import FolderRepo
+from app.services.scanner import has_video_files
+from app.services.settings_store import forget_kept_empty_dir, remember_kept_empty_dir
 from app.state import AppState
 
 router = APIRouter(prefix="/api/v1/folders", tags=["folders"])
@@ -86,3 +89,50 @@ async def rescan_folder(
         raise HTTPException(status_code=404, detail="Ordner nicht gefunden")
     state.job_queue.enqueue("scan", lambda: state.scanner.full_scan_folder(folder))
     return {"status": "queued"}
+
+
+class DeleteEmptyDirRequest(BaseModel):
+    path: str
+
+
+@router.post("/{folder_id}/delete-empty-dir", status_code=204)
+async def delete_empty_dir(
+    folder_id: int,
+    payload: DeleteEmptyDirRequest,
+    session: AsyncSession = Depends(get_db),
+) -> None:
+    repo = FolderRepo(session)
+    folder = await repo.get(folder_id)
+    if folder is None:
+        raise HTTPException(status_code=404, detail="Ordner nicht gefunden")
+
+    root = Path(folder.path).resolve()
+    target = Path(payload.path).resolve()
+    if target.parent != root:
+        raise HTTPException(status_code=400, detail="Pfad ist kein direktes Unterverzeichnis des Ordners")
+    if not target.is_dir():
+        raise HTTPException(status_code=404, detail="Verzeichnis nicht gefunden")
+    if has_video_files(target):
+        raise HTTPException(status_code=409, detail="Verzeichnis enthält mittlerweile Video-Dateien")
+
+    shutil.rmtree(target)
+    # It's gone -- no decision left to remember about it.
+    await forget_kept_empty_dir(session, str(target))
+
+
+@router.post("/{folder_id}/keep-empty-dir", status_code=204)
+async def keep_empty_dir(
+    folder_id: int,
+    payload: DeleteEmptyDirRequest,
+    session: AsyncSession = Depends(get_db),
+) -> None:
+    """Remembers that the user wants this empty directory left alone. An
+    empty directory gets no Anime row, so without persisting the decision the
+    prompt would reappear on every scan."""
+    folder = await FolderRepo(session).get(folder_id)
+    if folder is None:
+        raise HTTPException(status_code=404, detail="Ordner nicht gefunden")
+    target = Path(payload.path).resolve()
+    if target.parent != Path(folder.path).resolve():
+        raise HTTPException(status_code=400, detail="Pfad ist kein direktes Unterverzeichnis des Ordners")
+    await remember_kept_empty_dir(session, str(target))

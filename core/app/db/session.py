@@ -60,7 +60,3 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
         yield session
 
 
-async def get_session() -> AsyncIterator[AsyncSession]:
-    factory = get_session_factory()
-    async with factory() as session:
-        yield session
