@@ -199,7 +199,10 @@ export function useDeleteEmptyDir() {
   return useMutation({
     mutationFn: (entry: EmptyDirEntry) =>
       api.post<void>(`/api/v1/folders/${entry.folder_id}/delete-empty-dir`, { path: entry.path }),
-    onSuccess: (_data, entry) => {
+    // Either way, like dismissing: the Core refuses (409) once the directory
+    // isn't empty any more, and keeping the modal open over that refusal
+    // would block every other decision behind it.
+    onSettled: (_data, _error, entry) => {
       queryClient.setQueryData<EmptyDirEntry[]>(["pending-empty-dirs"], (old = []) =>
         old.filter((e) => e.path !== entry.path)
       )

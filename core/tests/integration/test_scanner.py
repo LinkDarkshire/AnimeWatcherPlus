@@ -261,7 +261,8 @@ async def test_new_empty_dir_is_not_added_and_publishes_event(scanner_env, tmp_p
     root.mkdir()
     show_dir = root / "Empty Show"
     show_dir.mkdir()
-    (show_dir / "readme.txt").write_bytes(b"no videos here")
+    # The app's own leftovers don't make a directory non-empty.
+    (show_dir / "tvshow.nfo").write_bytes(b"<tvshow/>")
 
     folder = await FolderRepo(session).create(str(root), "content", "Content")
 
@@ -614,6 +615,33 @@ async def test_full_scan_consolidation_leaves_file_in_place_on_name_collision(sc
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("leftover", ["Show - 01.mkv.part", "Show - 01.ass", "readme.txt"])
+async def test_dir_without_videos_but_with_files_is_not_offered_for_deletion(
+    scanner_env, tmp_path, leftover
+) -> None:
+    """No video is not the same as empty: an in-progress download or a folder
+    of subtitles must never be put behind a "delete" prompt."""
+    scanner, session = scanner_env
+    root = tmp_path / "content"
+    show_dir = root / "Downloading Show"
+    show_dir.mkdir(parents=True)
+    (show_dir / leftover).write_bytes(b"x")
+    folder = await FolderRepo(session).create(str(root), "content", "Content")
+
+    events: list[dict] = []
+
+    async def collect(payload: dict) -> None:
+        events.append(payload)
+
+    scanner._event_bus.subscribe(collect)
+    await scanner.full_scan_folder(folder)
+
+    assert [p for p in events if p["event"] == "folder.empty_dir_found"] == []
+    result = await session.execute(select(Anime).where(Anime.folder_id == folder.id))
+    assert result.scalars().all() == []
+
+
+@pytest.mark.asyncio
 async def test_kept_empty_dir_is_not_offered_again(scanner_env, tmp_path) -> None:
     """An empty directory gets no Anime row, so without remembering the
     decision the delete prompt came back on every single scan."""
@@ -669,3 +697,20 @@ async def test_consolidation_survives_an_unmovable_loose_file(scanner_env, tmp_p
     assert (root / "Fine" / "Fine_01.mkv").exists()
     animes = (await session.execute(select(Anime).where(Anime.folder_id == folder.id))).scalars().all()
     assert [a.directory_path for a in animes] == [str(root / "Fine")]
+
+
+@pytest.mark.asyncio
+async def test_folder_back_online_clears_offline_flag(scanner_env, tmp_path) -> None:
+    scanner, session = scanner_env
+    root = tmp_path / "nas"
+    folder = await FolderRepo(session).create(str(root), "content", "NAS")
+
+    await scanner.full_scan_folder(folder)  # share not mounted yet
+    await session.refresh(folder)
+    assert folder.offline is True
+
+    root.mkdir()
+    await scanner.full_scan_folder(folder)
+    await session.refresh(folder)
+    assert folder.offline is False
+    assert folder.id in scanner._observers  # watcher attached late

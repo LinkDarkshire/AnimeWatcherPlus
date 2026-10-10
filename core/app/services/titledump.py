@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import re
+import time
 from dataclasses import dataclass
 from xml.etree import ElementTree as ET
 
@@ -12,12 +13,15 @@ from sqlalchemy import delete, func, insert, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.db.models import AnidbTitleEntry
+from app.db.models import AnidbTitleEntry, Setting
 from app.db.session import session_scope
+from app.services.settings_store import get_setting
 
 logger = structlog.get_logger(__name__)
 
 TITLE_DUMP_URL = "https://anidb.net/api/anime-titles.xml.gz"
+TITLE_DUMP_IMPORTED_AT_KEY = "titledump_imported_at"  # Setting.value: time.time() epoch seconds
+TITLE_DUMP_MAX_AGE_S = 7 * 24 * 3600
 
 _BRACKET_RE = re.compile(r"[\[(（【][^\])）】]*[\])）】]")
 _YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
@@ -93,14 +97,19 @@ async def import_title_dump(session: AsyncSession, xml_bytes_gz: bytes) -> int:
 
 
 async def ensure_title_dump_imported(settings: Settings) -> None:
-    """Runs once at startup (as a background job): if the local title index is
-    empty, download the daily dump (NFA-04: max 1x/day in steady state, and this
-    only fires when the table has zero rows) and import it.
+    """Runs once at startup (as a background job): downloads and imports the
+    title dump when the local index is empty or older than
+    TITLE_DUMP_MAX_AGE_S. Without the age check a library would never learn
+    any anime announced after its first start, and every new series would
+    land in needs_manual_id. Well within AniDB's limit of one dump download
+    per day. A failed download keeps the existing index.
     """
     async with session_scope() as session:
         count = (await session.execute(select(func.count()).select_from(AnidbTitleEntry))).scalar_one()
-        if count > 0:
-            return
+        imported_at = await get_setting(session, TITLE_DUMP_IMPORTED_AT_KEY, None)
+    fresh = isinstance(imported_at, (int, float)) and time.time() - imported_at < TITLE_DUMP_MAX_AGE_S
+    if count > 0 and fresh:
+        return
     async with httpx.AsyncClient() as client:
         try:
             xml_bytes_gz = await download_title_dump(client)
@@ -109,6 +118,12 @@ async def ensure_title_dump_imported(settings: Settings) -> None:
             return
     async with session_scope() as session:
         await import_title_dump(session, xml_bytes_gz)
+        row = await session.get(Setting, TITLE_DUMP_IMPORTED_AT_KEY)
+        if row is None:
+            session.add(Setting(key=TITLE_DUMP_IMPORTED_AT_KEY, value=time.time()))
+        else:
+            row.value = time.time()
+        await session.commit()
 
 
 @dataclass(frozen=True)
@@ -130,21 +145,35 @@ async def fuzzy_match(session: AsyncSession, folder_name: str, limit: int = 5) -
     safe_tokens = [tok for tok in _NON_ALNUM_RE.sub(" ", normalized).split() if len(tok) >= 2]
     if not safe_tokens:
         return []
-    fts_query = " ".join(f'{tok}*' for tok in safe_tokens)
+    # OR, not FTS5's implicit AND: one extra word in the folder name ("Season
+    # 2", "Dub", a group name the normalizer didn't catch) would otherwise
+    # rule out the right title entirely. Ranking by bm25 keeps the best
+    # token overlaps inside the LIMIT; WRatio does the real scoring below.
+    fts_query = " OR ".join(f'"{tok}"*' for tok in safe_tokens)
     result = await session.execute(
         text(
-            "SELECT DISTINCT t.aid, t.title FROM anidb_title_fts f "
+            "SELECT t.aid, t.title FROM anidb_title_fts f "
             "JOIN anidb_title_index t ON t.id = f.rowid "
-            "WHERE anidb_title_fts MATCH :q LIMIT 500"
+            "WHERE anidb_title_fts MATCH :q ORDER BY f.rank LIMIT 500"
         ),
         {"q": fts_query},
     )
-    candidates = result.all()
-    if not candidates:
+    rows = list(dict.fromkeys((row.aid, row.title) for row in result.all()))
+    if not rows:
         return []
 
-    choices = {row.title: row.aid for row in candidates}
-    matches = process.extract(
-        normalized, choices.keys(), scorer=fuzz.WRatio, processor=fuzz_utils.default_process, limit=limit
+    # Scored as a list, not a {title: aid} dict: two different anime can
+    # share a title (a remake and its original), and collapsing them would
+    # hide exactly the ambiguity the top-2 check exists to catch.
+    titles = [title for _, title in rows]
+    scored = process.extract(
+        normalized, titles, scorer=fuzz.WRatio, processor=fuzz_utils.default_process, limit=None
     )
-    return [FuzzyCandidate(aid=choices[title], title=title, score=score) for title, score, _ in matches]
+    # One candidate per anime, its best-scoring title: several synonyms of the
+    # *same* anime scoring close together is not ambiguity.
+    best: dict[int, FuzzyCandidate] = {}
+    for title, score, index in scored:
+        aid = rows[index][0]
+        if aid not in best or score > best[aid].score:
+            best[aid] = FuzzyCandidate(aid=aid, title=title, score=score)
+    return sorted(best.values(), key=lambda c: c.score, reverse=True)[:limit]

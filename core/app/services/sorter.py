@@ -18,6 +18,7 @@ from app.db.models import Anime, ExpectedEpisode, Folder, LocalEpisode
 from app.db.repositories import AnimeRepo, FolderRepo, LocalEpisodeRepo
 from app.services import artwork, nfo
 from app.services.jobs import EventBus
+from app.services.media_files import companion_files, has_video_files, remove_dir_if_empty
 from app.services.settings_store import get_folder_title_order, get_rename_mode, get_sort_mode
 from app.services.titles import has_known_variants, title_for
 
@@ -160,7 +161,10 @@ def _dedupe_path(src: Path, dest: Path) -> Path:
     counter = 2
     while True:
         candidate = dest.with_name(f"{dest.stem} ({counter}){dest.suffix}")
-        if not candidate.exists():
+        # The source itself may already hold one of the numbered names (it is
+        # the second copy of an episode): that slot is free for it, or every
+        # rename would bump it from " (2)" to " (3)" and back.
+        if not candidate.exists() or _is_same_file(src, candidate):
             return candidate
         counter += 1
 
@@ -201,17 +205,22 @@ def move_file(src: Path, dest: Path) -> Path:
 
 
 def move_episode_file(src: Path, dest: Path) -> Path:
-    """Moves an episode file together with the per-episode NFO written next
-    to it (FA-09). Without this a rename strands `Old Name.nfo` beside
-    `New Name.mkv`, which Jellyfin/Kodi then read as a separate episode."""
+    """Moves an episode file together with every file named after it: the
+    per-episode NFO written next to it (FA-09), external subtitles
+    (`.ass`, `.en.srt`), separate audio tracks (`.mka`) and the like. Without
+    this a rename strands `Old Name.nfo`/`Old Name.ass` beside
+    `New Name.mkv` -- Jellyfin/Kodi read the NFO as a separate episode and
+    players stop loading the subtitles."""
+    companions = companion_files(src)
     moved = move_file(src, dest)
-    sidecar = src.with_suffix(".nfo")
-    if sidecar.exists():
+    for companion in companions:
+        # Keep everything after the episode's own stem: ".en.srt" stays ".en.srt".
+        target = moved.with_name(moved.stem + companion.name[len(src.stem):])
         try:
-            move_file(sidecar, moved.with_suffix(".nfo"))
+            move_file(companion, target)
         except OSError:
-            # Losing a regenerable sidecar must never fail the episode move.
-            logger.warning("episode_nfo_move_failed", path=str(sidecar))
+            # A companion that can't follow must never fail the episode move.
+            logger.warning("episode_companion_move_failed", path=str(companion))
     return moved
 
 
@@ -236,6 +245,30 @@ async def _suggest_target_folder(session: AsyncSession, anidb_id: int) -> int | 
 def _remove_sidecars(anime_dir: Path) -> None:
     for filename in (artwork.POSTER_FILENAME, nfo.TVSHOW_NFO, artwork.ANIINFO_FILENAME):
         (anime_dir / filename).unlink(missing_ok=True)
+
+
+def _move_remaining_files(source_dir: Path, new_dir: Path) -> None:
+    """Relocation moves the whole anime, so whatever is left in the source
+    once the episodes are out -- fonts, extras, subtitles not named after one
+    episode -- goes along, keeping its relative path. Best-effort: anything
+    that can't be moved is left where it is (and keeps the source directory
+    from being removed) rather than lost."""
+    for path in sorted(p for p in source_dir.rglob("*") if p.is_file()):
+        try:
+            move_file(path, new_dir / path.relative_to(source_dir))
+        except OSError:
+            logger.warning("leftover_file_move_failed", path=str(path))
+
+
+def _cleanup_source_dir(source_dir: Path) -> None:
+    """Removes the emptied source directory -- but only if it really is
+    empty. It used to be rmtree'd as soon as no *video* was left in it, which
+    deleted subtitles and other files that were never moved anywhere."""
+    try:
+        if not remove_dir_if_empty(source_dir):
+            logger.warning("source_dir_kept_not_empty", path=str(source_dir))
+    except OSError:
+        logger.warning("source_dir_cleanup_failed", path=str(source_dir))
 
 
 async def sort_anime(
@@ -270,20 +303,22 @@ async def sort_anime(
     target_anime = await _find_target_anime(session, target_folder_id, anime.anidb_id)
     folder_order = await get_folder_title_order(session)
 
-    # Deferred import: scanner.py imports identification.py, which calls
-    # into this module, so a module-level import here would be circular.
-    from app.services.scanner import has_video_files
-
     if target_anime is not None:
         target_dir = Path(target_anime.directory_path)
         target_title = title_for(target_anime, folder_order)
         for local_ep, expected in matched:
             src = Path(local_ep.file_path)
-            dest = move_episode_file(
-                src,
-                target_dir
-                / build_episode_filename(target_title, expected.ep_number, expected.title, src.suffix),
-            )
+            try:
+                dest = move_episode_file(
+                    src,
+                    target_dir
+                    / build_episode_filename(target_title, expected.ep_number, expected.title, src.suffix),
+                )
+            except OSError as exc:
+                # Every file moved so far is already recorded under the target
+                # anime, so stopping here leaves the DB consistent; the rest
+                # stays in the sort queue.
+                raise SortConflict(f"Datei konnte nicht verschoben werden: {exc}") from exc
             await episode_repo.delete_by_path(str(src))
             stat = dest.stat()
             await episode_repo.upsert(
@@ -291,9 +326,10 @@ async def sort_anime(
             )
 
         if not has_video_files(source_dir):
+            # No episode left to track, so the catalog entry goes. The
+            # directory itself only goes if nothing else is left in it.
             _remove_sidecars(source_dir)
-            if source_dir.exists():
-                shutil.rmtree(source_dir)
+            _cleanup_source_dir(source_dir)
             await anime_repo.delete(source_anime_id)
             await event_bus.publish("anime.removed", {"anime_id": source_anime_id, "path": str(source_dir)})
 
@@ -312,21 +348,37 @@ async def sort_anime(
     assert target_folder is not None  # validated by the API layer before calling in
     folder_title = title_for(anime, folder_order)
     new_dir = Path(target_folder.path) / sanitize_filename_component(folder_title)
+    new_dir_existed = new_dir.exists()
     new_dir.mkdir(parents=True, exist_ok=True)
 
-    for local_ep, expected in matched:
-        src = Path(local_ep.file_path)
-        dest = move_episode_file(
-            src, new_dir / build_episode_filename(folder_title, expected.ep_number, expected.title, src.suffix)
-        )
+    # Move every file first and only then touch the DB: if one move fails
+    # (a file open in a player), the ones already moved go back, so the anime
+    # is never split across two directories with half its rows pointing at
+    # each.
+    moves: list[tuple[Path, Path, str | None]] = []
+    try:
+        for local_ep, expected in matched:
+            src = Path(local_ep.file_path)
+            dest = move_episode_file(
+                src, new_dir / build_episode_filename(folder_title, expected.ep_number, expected.title, src.suffix)
+            )
+            moves.append((src, dest, _normalize_ep_number(expected.ep_number)))
+    except OSError as exc:
+        for src, dest, _ in reversed(moves):
+            try:
+                move_episode_file(dest, src)
+            except OSError:
+                logger.error("sort_rollback_failed", src=str(dest), dest=str(src))
+        if not new_dir_existed:
+            _cleanup_source_dir(new_dir)
+        raise SortConflict(f"Datei konnte nicht verschoben werden: {exc}") from exc
+
+    for src, dest, ep_number in moves:
         await episode_repo.delete_by_path(str(src))
         stat = dest.stat()
-        await episode_repo.upsert(anime.id, str(dest), stat.st_size, stat.st_mtime, _normalize_ep_number(expected.ep_number))
+        await episode_repo.upsert(anime.id, str(dest), stat.st_size, stat.st_mtime, ep_number)
 
-    for filename in (artwork.POSTER_FILENAME, nfo.TVSHOW_NFO, artwork.ANIINFO_FILENAME):
-        sidecar_src = source_dir / filename
-        if sidecar_src.exists():
-            move_file(sidecar_src, new_dir / filename)
+    _move_remaining_files(source_dir, new_dir)
 
     anime_row = await session.get(Anime, source_anime_id)
     assert anime_row is not None
@@ -334,8 +386,7 @@ async def sort_anime(
     anime_row.directory_path = str(new_dir)
     await session.commit()
 
-    if source_dir.exists():
-        shutil.rmtree(source_dir, ignore_errors=True)
+    _cleanup_source_dir(source_dir)
 
     await event_bus.publish("anime.sorted", {"anime_id": source_anime_id, "moved": len(matched), "unmatched": 0})
     return SortResult(moved=len(matched), unmatched=0, target_anime_id=source_anime_id)
@@ -551,30 +602,64 @@ def _compute_rename_plan(
     target_dir_name = sanitize_filename_component(folder_title)
     dir_needs_rename = current_dir.name != target_dir_name
 
-    matches = match_local_episodes(local_episodes, expected_episodes)
+    matched = [
+        (local, expected)
+        for local, expected in match_local_episodes(local_episodes, expected_episodes)
+        if expected is not None
+    ]
     file_renames: list[tuple[EpisodeFile, str]] = []
-    matched_total = 0
-    for local, expected in matches:
-        if expected is None:
-            continue
-        matched_total += 1
-        # os.path instead of Path(): counting the queue runs this once per
-        # episode in the entire library, and constructing two pathlib objects
-        # per episode was by far the most expensive thing that pass did.
-        # These are the same string operations without the path parsing.
-        current_name = os.path.basename(local.file_path)
+
+    # Two files can match the same episode (a 720p and a 1080p copy, v1 and
+    # v2). Only one of them can have the canonical name; the other gets
+    # " (2)" -- and that has to count as correctly named, or it would sit in
+    # the rename queue forever. Names are reserved per directory and compared
+    # case-insensitively, since that's how Windows sees a collision.
+    # os.path instead of Path(): counting the queue runs this once per episode
+    # in the entire library, and constructing pathlib objects per episode was
+    # by far the most expensive thing that pass did.
+    taken: set[tuple[str, str]] = set()
+    unsettled: list[tuple[EpisodeFile, str, str, str]] = []
+    for local, expected in matched:
+        parent, current_name = os.path.split(local.file_path)
         target_name = _episode_filename(
             target_dir_name, expected.ep_number, expected.title, os.path.splitext(current_name)[1]
         )
-        if current_name != target_name:
-            file_renames.append((local, target_name))
+        key = (parent, current_name.lower())
+        if _is_name_variant(current_name, target_name) and key not in taken:
+            taken.add(key)
+        else:
+            unsettled.append((local, parent, current_name, target_name))
+
+    for local, parent, current_name, target_name in unsettled:
+        name = _free_name_variant(parent, target_name, taken)
+        taken.add((parent, name.lower()))
+        if name != current_name:
+            file_renames.append((local, name))
 
     return _RenamePlan(
         dir_needs_rename=dir_needs_rename,
         target_dir_name=target_dir_name,
         file_renames=file_renames,
-        matched_total=matched_total,
+        matched_total=len(matched),
     )
+
+
+def _is_name_variant(name: str, target: str) -> bool:
+    """`target` itself, or `target` with a " (n)" collision suffix."""
+    if name == target:
+        return True
+    stem, suffix = os.path.splitext(target)
+    return re.fullmatch(re.escape(stem) + r" \(\d+\)" + re.escape(suffix), name) is not None
+
+
+def _free_name_variant(parent: str, target: str, taken: set[tuple[str, str]]) -> str:
+    if (parent, target.lower()) not in taken:
+        return target
+    stem, suffix = os.path.splitext(target)
+    counter = 2
+    while (parent, f"{stem} ({counter}){suffix}".lower()) in taken:
+        counter += 1
+    return f"{stem} ({counter}){suffix}"
 
 
 async def rename_anime(session: AsyncSession, event_bus: EventBus, anime_id: int) -> RenameResult:
@@ -622,14 +707,21 @@ async def rename_anime(session: AsyncSession, event_bus: EventBus, anime_id: int
         # the two cases apart by identity instead of by name.
         if target_dir.exists() and not target_dir.samefile(current_dir):
             raise RenameConflict(f"Zielverzeichnis '{plan.target_dir_name}' existiert bereits")
-        current_dir.rename(target_dir)
+        try:
+            current_dir.rename(target_dir)
+        except OSError as exc:
+            # Windows refuses to rename a directory while any file in it is
+            # open (a player, an Explorer preview). Nothing has changed yet.
+            raise RenameConflict(f"Verzeichnis konnte nicht umbenannt werden: {exc}") from exc
         anime.directory_path = str(target_dir)
         # The whole directory just moved atomically (same volume, always --
         # it's a rename within the same parent), so every file already
         # physically lives at its new path; only the DB's recorded paths
-        # are stale now, for matched and unmatched episodes alike.
+        # are stale now, for matched and unmatched episodes alike. Relative
+        # to the directory, not just by filename: episodes can sit in
+        # subfolders ("Season 1/..."), which must survive the rewrite.
         for local in local_episodes:
-            local.file_path = str(target_dir / Path(local.file_path).name)
+            local.file_path = str(target_dir / Path(local.file_path).relative_to(current_dir))
         await session.commit()
 
     renamed_files = 0
@@ -639,9 +731,9 @@ async def rename_anime(session: AsyncSession, event_bus: EventBus, anime_id: int
         # lands in the DB (the queue listing feeds the same planner read-only
         # column rows, which is why the plan itself is typed by protocol).
         local = cast(LocalEpisode, episode)
-        src = target_dir / Path(local.file_path).name
+        src = Path(local.file_path)
         try:
-            dest = move_episode_file(src, target_dir / target_filename)
+            dest = move_episode_file(src, src.parent / target_filename)
         except OSError as exc:
             # A single locked file (open in a player, say) must not leave the
             # rest of the series half-renamed with stale paths in the DB.

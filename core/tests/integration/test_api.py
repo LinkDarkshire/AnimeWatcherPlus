@@ -254,7 +254,7 @@ async def test_delete_empty_dir_success(client, db_session, tmp_path) -> None:
     content_dir.mkdir()
     empty_dir = content_dir / "Empty Show"
     empty_dir.mkdir()
-    (empty_dir / "readme.txt").write_bytes(b"no videos")
+    (empty_dir / "tvshow.nfo").write_bytes(b"<tvshow/>")  # app's own sidecar only
 
     folder = await FolderRepo(db_session).create(str(content_dir), "content", "Content")
 
@@ -263,6 +263,24 @@ async def test_delete_empty_dir_success(client, db_session, tmp_path) -> None:
     )
     assert response.status_code == 204
     assert not empty_dir.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("leftover", ["Show - 01.mkv.part", "Show - 01.ass", "readme.txt"])
+async def test_delete_empty_dir_refuses_dir_with_files(client, db_session, tmp_path, leftover) -> None:
+    from app.db.repositories import FolderRepo
+
+    content_dir = tmp_path / "content"
+    target = content_dir / "Downloading Show"
+    target.mkdir(parents=True)
+    (target / leftover).write_bytes(b"x")
+    folder = await FolderRepo(db_session).create(str(content_dir), "content", "Content")
+
+    response = await client.post(
+        f"/api/v1/folders/{folder.id}/delete-empty-dir", json={"path": str(target)}
+    )
+    assert response.status_code == 409
+    assert (target / leftover).exists()
 
 
 @pytest.mark.asyncio
@@ -868,3 +886,34 @@ async def test_repair_scan_endpoint_reports_what_it_changed(
 
     await db_session.refresh(anime)
     assert anime.title == "Tsundere Girl"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"anidb_banned_until": 0},  # internal state, not a user setting
+        {"kept_empty_dirs": []},
+        {"sort_mode": "sometimes"},
+        {"staleness_threshold_days": -5},
+        {"staleness_rule_enabled": "yes"},
+    ],
+)
+async def test_put_settings_rejects_unknown_keys_and_invalid_values(client, values) -> None:
+    response = await client.put("/api/v1/settings", json={"values": values})
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url",
+    [
+        "/api/v1/animes?page=0",
+        "/api/v1/animes?size=0",
+        "/api/v1/animes?size=100000",
+        "/api/v1/missing-episodes?page=-1",
+    ],
+)
+async def test_paging_parameters_are_validated(client, url) -> None:
+    response = await client.get(url)
+    assert response.status_code == 422

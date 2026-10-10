@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +19,11 @@ from app.services.staleness import is_stale, last_episode_air_date
 from app.state import AppState
 
 router = APIRouter(prefix="/api/v1", tags=["animes"])
+
+# Shared paging bounds: a page below 1 would turn into a negative OFFSET, and
+# an unbounded size lets one request pull the entire catalog.
+PAGE = Query(1, ge=1)
+PAGE_SIZE = Query(50, ge=1, le=500)
 
 # Deliberately NOT registered with the bearer-token dependency in main.py:
 # an <img src="..."> tag can't send an Authorization header (same constraint
@@ -152,8 +157,8 @@ async def list_animes(
     type: str | None = None,
     status: str | None = None,
     missing: bool = False,
-    page: int = 1,
-    size: int = 50,
+    page: int = PAGE,
+    size: int = PAGE_SIZE,
     session: AsyncSession = Depends(get_db),
 ) -> AnimeListResponse:
     repo = AnimeRepo(session)
@@ -262,7 +267,7 @@ class MissingEpisodesOverview(BaseModel):
 
 @router.get("/missing-episodes", response_model=MissingEpisodesOverview)
 async def list_missing_episodes(
-    page: int = 1, size: int = 50, session: AsyncSession = Depends(get_db)
+    page: int = PAGE, size: int = PAGE_SIZE, session: AsyncSession = Depends(get_db)
 ) -> MissingEpisodesOverview:
     """FA-12, global view. Paginated like the library -- on a large catalog
     this list can itself run into the hundreds."""
@@ -468,15 +473,20 @@ async def refresh_metadata(
         raise HTTPException(status_code=404, detail="Anime nicht gefunden")
     if anime.anidb_id is None:
         raise HTTPException(status_code=409, detail="Anime ist noch nicht identifiziert")
-    anime = await identification.manual_identify(
-        session,
-        state.settings,
-        anime,
-        Path(anime.directory_path),
-        anime.anidb_id,
-        state.provider_registry,
-        state.event_bus,
-    )
+    try:
+        anime = await identification.manual_identify(
+            session,
+            state.settings,
+            anime,
+            Path(anime.directory_path),
+            anime.anidb_id,
+            state.provider_registry,
+            state.event_bus,
+        )
+    except ValueError as exc:
+        # Provider returned nothing (ban cool-down, network) -- same 502 the
+        # manual identify endpoint gives, not an unhandled 500.
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     threshold_days, _ = await get_staleness_config(session)
     return _to_detail(anime, threshold_days)
 

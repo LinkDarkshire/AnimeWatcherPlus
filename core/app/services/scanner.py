@@ -18,25 +18,41 @@ from app.providers.base import ProviderRegistry
 from app.services import identification, pending_actions
 from app.services.episode_parse import guess_episode_number, parse_release_filename
 from app.services.jobs import EventBus, JobQueue
+from app.services.media_files import (
+    VIDEO_EXTENSIONS,
+    has_user_files,
+    has_video_files,
+    is_ignored,
+    is_video_file,
+)
 from app.services.settings_store import get_kept_empty_dirs, get_staleness_config
 from app.services.sorter import sanitize_filename_component
 from app.services.staleness import is_stale
 
 logger = structlog.get_logger(__name__)
 
-VIDEO_EXTENSIONS = {".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".webm", ".wmv", ".flv", ".mov"}
-IGNORED_SUFFIXES = {".part", ".crdownload", ".!ut", ".tmp", ".downloading"}
+
+def _list_video_files(anime_dir: Path) -> list[tuple[str, str, int, float]]:
+    """(path, filename, size, mtime) for every video file under the directory.
+    Runs in a worker thread: on a network share this walk is the slow part of
+    a scan, and it must not stall the API while it runs. A file that vanishes
+    between listing and stat() is simply skipped."""
+    files: list[tuple[str, str, int, float]] = []
+    for f in anime_dir.rglob("*"):
+        if not is_video_file(f):
+            continue
+        try:
+            if not f.is_file():
+                continue
+            stat = f.stat()
+        except OSError:
+            continue
+        files.append((str(f), f.name, stat.st_size, stat.st_mtime))
+    return files
 
 
-def is_ignored(path: Path) -> bool:
-    return path.suffix.lower() in IGNORED_SUFFIXES
-
-
-def has_video_files(directory: Path) -> bool:
-    return any(
-        f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS and not is_ignored(f)
-        for f in directory.rglob("*")
-    )
+def _list_subdirs(root: Path) -> set[Path]:
+    return {p for p in root.iterdir() if p.is_dir()}
 
 
 def _consolidate_loose_files(root: Path) -> None:
@@ -206,10 +222,10 @@ class ScannerService:
             stable_count = 0
             while stable_count < self._settings.scan_debounce_checks:
                 await asyncio.sleep(self._settings.scan_debounce_interval_s)
-                if not anime_dir.exists():
+                if not await asyncio.to_thread(anime_dir.exists):
                     await self._handle_removed(anime_dir)
                     return
-                sig = _directory_signature(anime_dir)
+                sig = await asyncio.to_thread(_directory_signature, anime_dir)
                 if sig == last_sig and sig != (0, 0.0):
                     stable_count += 1
                 else:
@@ -221,20 +237,20 @@ class ScannerService:
 
     async def full_scan_folder(self, folder: Folder) -> None:
         root = Path(folder.path)
-        if not root.exists():
-            async with session_scope() as session:
-                folder_repo = FolderRepo(session)
-                db_folder = await folder_repo.get(folder.id)
-                if db_folder is not None:
-                    db_folder.offline = True
-                    await session.commit()
+        online = await asyncio.to_thread(root.exists)
+        await self._set_folder_offline(folder.id, not online)
+        if not online:
             logger.warning("folder_offline", folder_id=folder.id, path=folder.path)
             return
+        # A folder that was unreachable at startup (NAS still booting, VPN
+        # down) never got a watcher; attach it now that it's back.
+        if folder.active:
+            self.watch_folder(folder)
 
         if folder.type == "download":
-            _consolidate_loose_files(root)
+            await asyncio.to_thread(_consolidate_loose_files, root)
 
-        current_dirs = {p for p in root.iterdir() if p.is_dir()}
+        current_dirs = await asyncio.to_thread(_list_subdirs, root)
         for anime_dir in current_dirs:
             async with session_scope() as session:
                 still_exists = await FolderRepo(session).get(folder.id) is not None
@@ -256,7 +272,12 @@ class ScannerService:
 
             result = await session.execute(select(Anime).where(Anime.folder_id == folder.id))
             for anime in result.scalars().all():
-                if Path(anime.directory_path) not in current_dirs:
+                anime_path = Path(anime.directory_path)
+                # Re-checked on disk, not just against the listing from the
+                # start of the scan: a rename/sort through the API while this
+                # (possibly long) scan ran moves the anime to a path that
+                # listing never saw, and deleting it for that would be wrong.
+                if anime_path not in current_dirs and not await asyncio.to_thread(anime_path.is_dir):
                     # No more soft "missing" state -- a previously-tracked
                     # folder that's gone is removed from the catalog
                     # outright, no confirmation (per user request). The
@@ -266,6 +287,13 @@ class ScannerService:
                     anime_id, path = anime.id, anime.directory_path
                     await anime_repo.delete(anime_id)
                     await self._event_bus.publish("anime.removed", {"anime_id": anime_id, "path": path})
+
+    async def _set_folder_offline(self, folder_id: int, offline: bool) -> None:
+        async with session_scope() as session:
+            db_folder = await FolderRepo(session).get(folder_id)
+            if db_folder is not None and db_folder.offline != offline:
+                db_folder.offline = offline
+                await session.commit()
 
     async def _handle_removed(self, anime_dir: Path) -> None:
         async with session_scope() as session:
@@ -297,15 +325,18 @@ class ScannerService:
             anime = await anime_repo.get_by_directory(str(anime_dir))
             is_new = anime is None
             if anime is None:
-                if not has_video_files(anime_dir):
-                    # Don't catalog a directory with no episodes in it --
-                    # surface it for the user to confirm deleting instead
-                    # (it never got an Anime row, so there's nothing here to
-                    # clean up on our end beyond publishing the event).
+                if not await asyncio.to_thread(has_video_files, anime_dir):
+                    # Don't catalog a directory with no episodes in it. Only a
+                    # *truly* empty one is offered for deletion, though: no
+                    # video files can just as well mean a download still in
+                    # progress (.part files) or a folder of subtitles/archives,
+                    # which must never end up behind a "delete" button.
                     # "Keep" is remembered, or the prompt would come back on
                     # every single scan for a directory the user already
                     # decided about.
-                    if str(anime_dir) not in await get_kept_empty_dirs(session):
+                    if await asyncio.to_thread(has_user_files, anime_dir):
+                        logger.debug("dir_without_videos_skipped", path=str(anime_dir))
+                    elif str(anime_dir) not in await get_kept_empty_dirs(session):
                         await self._event_bus.publish(
                             "folder.empty_dir_found", {"folder_id": folder.id, "path": str(anime_dir)}
                         )
@@ -321,20 +352,16 @@ class ScannerService:
             existing_by_path = {ep.file_path: ep for ep in await episode_repo.by_anime(anime.id)}
             seen_paths: set[str] = set()
             episodes_changed = False
-            for video_file in anime_dir.rglob("*"):
-                if not video_file.is_file() or video_file.suffix.lower() not in VIDEO_EXTENSIONS:
-                    continue
-                if is_ignored(video_file):
-                    continue
-                stat = video_file.stat()
-                path_str = str(video_file)
+            for path_str, file_name, file_size, file_mtime in await asyncio.to_thread(
+                _list_video_files, anime_dir
+            ):
                 seen_paths.add(path_str)
                 existing = existing_by_path.get(path_str)
-                parsed_number = guess_episode_number(video_file.name)
+                parsed_number = guess_episode_number(file_name)
                 if (
                     existing is not None
-                    and existing.file_size == stat.st_size
-                    and existing.file_mtime == stat.st_mtime
+                    and existing.file_size == file_size
+                    and existing.file_mtime == file_mtime
                     # The size/mtime cache only proves the *file* is unchanged,
                     # not that the number stored for it is still what the parser
                     # would say: numbers parsed by an older, weaker parser would
@@ -348,8 +375,8 @@ class ScannerService:
                 await episode_repo.upsert(
                     anime.id,
                     path_str,
-                    stat.st_size,
-                    stat.st_mtime,
+                    file_size,
+                    file_mtime,
                     parsed_number,
                 )
                 episodes_changed = True

@@ -135,8 +135,15 @@ fn get_connection_info(state: State<ConnectionInfo>) -> ConnectionInfo {
 /// Reveals an anime's directory in the OS's native file manager, so a
 /// misidentified/duplicate entry can be inspected or fixed by hand without
 /// re-typing its (often long, network-share) path.
+///
+/// Only ever opens an existing *directory*: on Windows `explorer <file>`
+/// launches the file with its associated program, so passing anything else
+/// through would turn this command into "run any executable".
 #[tauri::command]
 fn open_folder(path: String) -> Result<(), String> {
+    if !std::path::Path::new(&path).is_dir() {
+        return Err(format!("not a directory: {path}"));
+    }
     let result = if cfg!(target_os = "windows") {
         Command::new("explorer").arg(&path).spawn()
     } else if cfg!(target_os = "macos") {

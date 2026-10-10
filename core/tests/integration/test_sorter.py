@@ -861,3 +861,161 @@ async def test_rename_keeps_what_succeeded_when_one_file_is_locked(
     # Every recorded path must exist on disk, renamed or not.
     assert all(Path(e.file_path).exists() for e in episodes)
     assert Path(reloaded.directory_path).name == "Real Title"
+
+
+@pytest.mark.asyncio
+async def test_sort_merge_keeps_source_dir_with_leftover_files(db_session, tmp_path) -> None:
+    """Once the episodes are out, the catalog entry goes -- but a directory
+    still holding the user's files (fonts, a readme) must not be deleted."""
+    download_folder = await FolderRepo(db_session).create(str(tmp_path / "downloads"), "download", "Downloads")
+    content_folder = await FolderRepo(db_session).create(str(tmp_path / "content"), "content", "Content")
+    await _make_content_anime(db_session, content_folder.id, tmp_path / "content" / "Show A", 42, "Show A")
+    source = await _make_download_anime(db_session, download_folder.id, tmp_path / "downloads" / "Show A", 42, [1])
+    leftover = Path(source.directory_path) / "Fonts" / "font.ttf"
+    leftover.parent.mkdir()
+    leftover.write_bytes(b"font")
+
+    await sorter.sort_anime(db_session, EventBus(), source.id, content_folder.id)
+
+    assert leftover.exists()
+    assert await AnimeRepo(db_session).get(source.id) is None
+
+
+@pytest.mark.asyncio
+async def test_sort_moves_subtitles_named_after_the_episode(db_session, tmp_path) -> None:
+    download_folder = await FolderRepo(db_session).create(str(tmp_path / "downloads"), "download", "Downloads")
+    content_folder = await FolderRepo(db_session).create(str(tmp_path / "content"), "content", "Content")
+    target = await _make_content_anime(db_session, content_folder.id, tmp_path / "content" / "Show A", 42, "Show A")
+    source = await _make_download_anime(db_session, download_folder.id, tmp_path / "downloads" / "Show A", 42, [1])
+    video = Path((await LocalEpisodeRepo(db_session).by_anime(source.id))[0].file_path)
+    video.with_suffix(".ass").write_text("subs", encoding="utf-8")
+    video.with_name(video.stem + ".en.srt").write_text("subs", encoding="utf-8")
+
+    await sorter.sort_anime(db_session, EventBus(), source.id, content_folder.id)
+
+    target_dir = Path(target.directory_path)
+    assert (target_dir / "Show A - S01E01 - Episode 1.ass").exists()
+    assert (target_dir / "Show A - S01E01 - Episode 1.en.srt").exists()
+    assert not Path(source.directory_path).exists()  # emptied completely, so removed
+
+
+@pytest.mark.asyncio
+async def test_sort_relocate_takes_leftover_files_along(db_session, tmp_path) -> None:
+    download_folder = await FolderRepo(db_session).create(str(tmp_path / "downloads"), "download", "Downloads")
+    content_folder = await FolderRepo(db_session).create(str(tmp_path / "content"), "content", "Content")
+    source = await _make_download_anime(db_session, download_folder.id, tmp_path / "downloads" / "Show B", 7, [1])
+    source_dir = Path(source.directory_path)
+    (source_dir / "Fonts").mkdir()
+    (source_dir / "Fonts" / "font.ttf").write_bytes(b"font")
+
+    await sorter.sort_anime(db_session, EventBus(), source.id, content_folder.id)
+
+    new_dir = tmp_path / "content" / "Show B"
+    assert (new_dir / "Fonts" / "font.ttf").exists()
+    assert not source_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_sort_relocate_rolls_back_when_a_move_fails(db_session, tmp_path, monkeypatch) -> None:
+    download_folder = await FolderRepo(db_session).create(str(tmp_path / "downloads"), "download", "Downloads")
+    content_folder = await FolderRepo(db_session).create(str(tmp_path / "content"), "content", "Content")
+    source = await _make_download_anime(db_session, download_folder.id, tmp_path / "downloads" / "Show B", 7, [1, 2])
+    source_dir = Path(source.directory_path)
+    before = sorted(p.name for p in source_dir.iterdir())
+
+    real_move = sorter.move_file
+    calls = {"n": 0}
+
+    def flaky_move(src: Path, dest: Path) -> Path:
+        calls["n"] += 1
+        if calls["n"] == 2:  # second episode: "file is open in a player"
+            raise PermissionError(errno.EACCES, "locked", str(src))
+        return real_move(src, dest)
+
+    monkeypatch.setattr(sorter, "move_file", flaky_move)
+
+    with pytest.raises(sorter.SortConflict):
+        await sorter.sort_anime(db_session, EventBus(), source.id, content_folder.id)
+
+    assert sorted(p.name for p in source_dir.iterdir()) == before
+    assert not (tmp_path / "content" / "Show B").exists()
+    reloaded = await AnimeRepo(db_session).get(source.id)
+    assert reloaded.directory_path == str(source_dir)
+    paths = {le.file_path for le in await LocalEpisodeRepo(db_session).by_anime(source.id)}
+    assert all(Path(p).parent == source_dir for p in paths)
+
+
+@pytest.mark.asyncio
+async def test_rename_moves_subtitles_with_the_episode(db_session, tmp_path) -> None:
+    content_folder = await FolderRepo(db_session).create(str(tmp_path / "content"), "content", "Content")
+    anime = await _make_mismatched_anime(
+        db_session, content_folder.id, tmp_path / "content" / "Real Title", 2, "Real Title", [1]
+    )
+    (Path(anime.directory_path) / "OldName - 01.ass").write_text("subs", encoding="utf-8")
+
+    await sorter.rename_anime(db_session, EventBus(), anime.id)
+
+    new_dir = Path(anime.directory_path)
+    assert (new_dir / "Real Title - S01E01 - Episode 1.ass").exists()
+    assert not (new_dir / "OldName - 01.ass").exists()
+
+
+@pytest.mark.asyncio
+async def test_rename_two_copies_of_one_episode_settles(db_session, tmp_path) -> None:
+    """Two files for the same episode: one gets the canonical name, the
+    other " (2)" -- and that has to be final, not an entry that stays in the
+    rename queue forever (and flips between " (2)" and " (3)" on each run)."""
+    content_folder = await FolderRepo(db_session).create(str(tmp_path / "content"), "content", "Content")
+    anime = await _make_mismatched_anime(
+        db_session, content_folder.id, tmp_path / "content" / "Real Title", 4, "Real Title", [1]
+    )
+    second = Path(anime.directory_path) / "OldName - 01 [720p].mkv"
+    second.write_bytes(b"y" * 5)
+    await LocalEpisodeRepo(db_session).upsert(anime.id, str(second), 5, second.stat().st_mtime, "1")
+
+    first = await sorter.rename_anime(db_session, EventBus(), anime.id)
+    assert first.renamed_files == 2
+    names = sorted(p.name for p in Path(anime.directory_path).glob("*.mkv"))
+    assert names == ["Real Title - S01E01 - Episode 1 (2).mkv", "Real Title - S01E01 - Episode 1.mkv"]
+
+    assert await sorter.list_rename_queue(db_session) == []
+    again = await sorter.rename_anime(db_session, EventBus(), anime.id)
+    assert again.renamed_files == 0
+    assert sorted(p.name for p in Path(anime.directory_path).glob("*.mkv")) == names
+
+
+@pytest.mark.asyncio
+async def test_rename_dir_keeps_episode_subfolders(db_session, tmp_path) -> None:
+    content_folder = await FolderRepo(db_session).create(str(tmp_path / "content"), "content", "Content")
+    anime = await _make_mismatched_anime(
+        db_session, content_folder.id, tmp_path / "content" / "OldFolderName", 5, "Real Title", [1]
+    )
+    episode_repo = LocalEpisodeRepo(db_session)
+    flat = Path(anime.directory_path) / "OldName - 01.mkv"
+    season = Path(anime.directory_path) / "Season 1"
+    season.mkdir()
+    nested = flat.rename(season / flat.name)
+    await episode_repo.delete_by_path(str(flat))
+    await episode_repo.upsert(anime.id, str(nested), 10, nested.stat().st_mtime, "1")
+
+    await sorter.rename_anime(db_session, EventBus(), anime.id)
+
+    expected = tmp_path / "content" / "Real Title" / "Season 1" / "Real Title - S01E01 - Episode 1.mkv"
+    assert expected.exists()
+    [episode] = await LocalEpisodeRepo(db_session).by_anime(anime.id)
+    assert episode.file_path == str(expected)
+
+
+@pytest.mark.asyncio
+async def test_rename_dir_failure_is_a_conflict(db_session, tmp_path, monkeypatch) -> None:
+    content_folder = await FolderRepo(db_session).create(str(tmp_path / "content"), "content", "Content")
+    anime = await _make_mismatched_anime(
+        db_session, content_folder.id, tmp_path / "content" / "OldFolderName", 6, "Real Title", [1]
+    )
+
+    def locked(self, target):
+        raise PermissionError(errno.EACCES, "in use", str(self))
+
+    monkeypatch.setattr(Path, "rename", locked)
+    with pytest.raises(sorter.RenameConflict):
+        await sorter.rename_anime(db_session, EventBus(), anime.id)

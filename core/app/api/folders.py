@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,8 +7,9 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_app_state, get_db
+from app.db.models import Folder
 from app.db.repositories import FolderRepo
-from app.services.scanner import has_video_files
+from app.services.media_files import APP_SIDECARS, has_user_files, remove_dir_if_empty
 from app.services.settings_store import forget_kept_empty_dir, remember_kept_empty_dir
 from app.state import AppState
 
@@ -95,6 +95,20 @@ class DeleteEmptyDirRequest(BaseModel):
     path: str
 
 
+def _child_dir_of(folder: Folder, raw_path: str) -> Path:
+    """Validates that `raw_path` is a direct subdirectory of the folder and
+    returns it in the scanner's own spelling (`folder.path / name`).
+
+    The containment check compares resolved paths, but the returned path must
+    not be the resolved one: on Windows a mapped drive resolves to its UNC
+    form, and a "keep" decision stored as `\\\\server\\share\\X` would never
+    match the `Z:\\X` the scanner looks it up by."""
+    target = Path(raw_path)
+    if target.resolve().parent != Path(folder.path).resolve():
+        raise HTTPException(status_code=400, detail="Pfad ist kein direktes Unterverzeichnis des Ordners")
+    return Path(folder.path) / target.name
+
+
 @router.post("/{folder_id}/delete-empty-dir", status_code=204)
 async def delete_empty_dir(
     folder_id: int,
@@ -106,16 +120,19 @@ async def delete_empty_dir(
     if folder is None:
         raise HTTPException(status_code=404, detail="Ordner nicht gefunden")
 
-    root = Path(folder.path).resolve()
-    target = Path(payload.path).resolve()
-    if target.parent != root:
-        raise HTTPException(status_code=400, detail="Pfad ist kein direktes Unterverzeichnis des Ordners")
+    target = _child_dir_of(folder, payload.path)
     if not target.is_dir():
         raise HTTPException(status_code=404, detail="Verzeichnis nicht gefunden")
-    if has_video_files(target):
-        raise HTTPException(status_code=409, detail="Verzeichnis enthält mittlerweile Video-Dateien")
+    # Checked here again, not just when the prompt was raised: files may have
+    # arrived since (a download starting), and "no videos" alone was never
+    # enough -- subtitles or archives must not be deleted with it.
+    if has_user_files(target):
+        raise HTTPException(status_code=409, detail="Verzeichnis ist nicht leer")
 
-    shutil.rmtree(target)
+    for name in APP_SIDECARS:
+        (target / name).unlink(missing_ok=True)
+    if not remove_dir_if_empty(target):
+        raise HTTPException(status_code=409, detail="Verzeichnis ist nicht leer")
     # It's gone -- no decision left to remember about it.
     await forget_kept_empty_dir(session, str(target))
 
@@ -132,7 +149,4 @@ async def keep_empty_dir(
     folder = await FolderRepo(session).get(folder_id)
     if folder is None:
         raise HTTPException(status_code=404, detail="Ordner nicht gefunden")
-    target = Path(payload.path).resolve()
-    if target.parent != Path(folder.path).resolve():
-        raise HTTPException(status_code=400, detail="Pfad ist kein direktes Unterverzeichnis des Ordners")
-    await remember_kept_empty_dir(session, str(target))
+    await remember_kept_empty_dir(session, str(_child_dir_of(folder, payload.path)))
