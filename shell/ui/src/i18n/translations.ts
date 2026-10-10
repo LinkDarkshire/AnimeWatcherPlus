@@ -12,6 +12,7 @@ export type Language = keyof typeof LANGUAGES
 const de = {
   "nav.library": "Bibliothek",
   "nav.missingEpisodes": "Fehlende Folgen",
+  "nav.wishlist": "Wunschliste",
   "nav.review": "Abfragen",
   "nav.folders": "Ordner",
   "nav.settings": "Einstellungen",
@@ -197,6 +198,23 @@ const de = {
     'In "{path}" wurden keine Video-Dateien gefunden. Verzeichnis von der Platte löschen?',
   "emptyFolder.delete": "Löschen",
   "emptyFolder.keep": "Behalten",
+
+  "wishlist.title": "Wunschliste",
+  "wishlist.description":
+    "Animes, die du noch nicht hast. Sie erscheinen nicht in der Bibliothek, bis sie in einem deiner Ordner auftauchen.",
+  "wishlist.searchPlaceholder": "Anime-Titel oder AniDB-ID suchen…",
+  "wishlist.searchHint": "Gesucht wird in der lokalen AniDB-Titelliste – mindestens 2 Zeichen.",
+  "wishlist.noResults": "Kein Anime gefunden. Ist die AniDB-Titelliste schon geladen?",
+  "wishlist.matchedVia": "gefunden über „{title}“",
+  "wishlist.add": "Hinzufügen",
+  "wishlist.onWishlist": "Auf der Wunschliste",
+  "wishlist.inLibrary": "In Bibliothek",
+  "wishlist.notAvailable": "Nicht vorhanden",
+  "wishlist.remove": "Entfernen",
+  "wishlist.empty": "Deine Wunschliste ist leer.",
+  "wishlist.episodes": "{count} Folgen",
+  "wishlist.detailsPending": "Details werden von AniDB geladen…",
+  "wishlist.addFailed": "Hinzufügen fehlgeschlagen: {message}",
 }
 
 export type TranslationKey = keyof typeof de
@@ -204,6 +222,7 @@ export type TranslationKey = keyof typeof de
 const en: Record<TranslationKey, string> = {
   "nav.library": "Library",
   "nav.missingEpisodes": "Missing episodes",
+  "nav.wishlist": "Wishlist",
   "nav.review": "Requests",
   "nav.folders": "Folders",
   "nav.settings": "Settings",
@@ -389,6 +408,23 @@ const en: Record<TranslationKey, string> = {
     'No video files were found in "{path}". Delete the directory from disk?',
   "emptyFolder.delete": "Delete",
   "emptyFolder.keep": "Keep",
+
+  "wishlist.title": "Wishlist",
+  "wishlist.description":
+    "Anime you don't have yet. They don't appear in the library until they turn up in one of your folders.",
+  "wishlist.searchPlaceholder": "Search an anime title or AniDB ID…",
+  "wishlist.searchHint": "Searches the local AniDB title list – at least 2 characters.",
+  "wishlist.noResults": "No anime found. Has the AniDB title list been loaded yet?",
+  "wishlist.matchedVia": "matched via “{title}”",
+  "wishlist.add": "Add",
+  "wishlist.onWishlist": "On wishlist",
+  "wishlist.inLibrary": "In library",
+  "wishlist.notAvailable": "Not available",
+  "wishlist.remove": "Remove",
+  "wishlist.empty": "Your wishlist is empty.",
+  "wishlist.episodes": "{count} episodes",
+  "wishlist.detailsPending": "Loading details from AniDB…",
+  "wishlist.addFailed": "Could not add: {message}",
 }
 
 export const translations: Record<Language, Record<TranslationKey, string>> = { de, en }

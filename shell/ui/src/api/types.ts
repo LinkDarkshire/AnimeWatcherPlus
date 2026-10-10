@@ -219,3 +219,28 @@ export interface RepairScanResult {
   posters_relinked: number
   without_local_source: number
 }
+
+/** An anime the user wants but doesn't have yet (never part of the library). */
+export interface WishlistItem {
+  id: number
+  anidb_id: number
+  title: string
+  year: number | null
+  media_type: string | null
+  episode_count: number | null
+  /** Year/type/episodes are still being fetched from AniDB (or the fetch failed). */
+  details_pending: boolean
+  /** Set once the anime has turned up in the library. */
+  library_anime_id: number | null
+  created_at: string
+}
+
+/** A title-dump search hit for adding to the wishlist. */
+export interface WishlistCandidate {
+  anidb_id: number
+  title: string
+  matched_title: string
+  score: number
+  in_library: boolean
+  on_wishlist: boolean
+}

@@ -19,6 +19,8 @@ import type {
   SortQueueItem,
   SortResolveResult,
   TagSummary,
+  WishlistCandidate,
+  WishlistItem,
 } from "./types"
 
 export type { AnimeFilters }
@@ -386,5 +388,46 @@ export function invalidateServerQueries(
     predicate: (query) =>
       query.queryKey[0] !== "pending-empty-dirs" &&
       (!onlyFailed || query.state.status === "error"),
+  })
+}
+
+export function useWishlist() {
+  return useQuery({
+    queryKey: ["wishlist"],
+    queryFn: () => api.get<WishlistItem[]>("/api/v1/wishlist"),
+  })
+}
+
+/** Searches the local AniDB title dump -- no AniDB request per keystroke. */
+export function useWishlistSearch(query: string) {
+  const trimmed = query.trim()
+  return useQuery({
+    queryKey: ["wishlist-search", trimmed],
+    queryFn: () =>
+      api.get<WishlistCandidate[]>(`/api/v1/wishlist/search?q=${encodeURIComponent(trimmed)}`),
+    enabled: trimmed.length >= 2,
+    placeholderData: (previous) => previous,
+  })
+}
+
+export function useAddToWishlist() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (anidbId: number) => api.post<WishlistItem>("/api/v1/wishlist", { anidb_id: anidbId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["wishlist"] })
+      queryClient.invalidateQueries({ queryKey: ["wishlist-search"] })
+    },
+  })
+}
+
+export function useRemoveFromWishlist() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (entryId: number) => api.del<void>(`/api/v1/wishlist/${entryId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["wishlist"] })
+      queryClient.invalidateQueries({ queryKey: ["wishlist-search"] })
+    },
   })
 }

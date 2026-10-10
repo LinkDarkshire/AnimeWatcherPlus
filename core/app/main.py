@@ -20,6 +20,7 @@ from app.api import (
     settings_api,
     sort_queue,
     tags,
+    wishlist,
     ws,
 )
 from app.api.animes import review_router
@@ -129,6 +130,7 @@ def create_app() -> FastAPI:
     app.include_router(rename_queue.router, dependencies=[protected])
     app.include_router(pending_actions.router, dependencies=[protected])
     app.include_router(maintenance.router, dependencies=[protected])
+    app.include_router(wishlist.router, dependencies=[protected])
     app.include_router(ws.router)
 
     return app

@@ -195,3 +195,23 @@ class JobLog(Base):
     result: Mapped[str] = mapped_column(String)
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class WishlistEntry(Base):
+    """An anime the user wants but doesn't have yet. Deliberately its own
+    table rather than an Anime row with a flag: the library, the queues and
+    every scan work on `anime`, and a wished-for series has no directory,
+    files or episodes for any of them to act on."""
+
+    __tablename__ = "wishlist_entry"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    anidb_id: Mapped[int] = mapped_column(Integer, unique=True)
+    title: Mapped[str] = mapped_column(String)
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    media_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    episode_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Set once the background job got the details from AniDB; NULL means
+    # still pending (or the fetch failed, e.g. during a ban cool-down).
+    details_fetched_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

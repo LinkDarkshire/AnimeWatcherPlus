@@ -79,6 +79,8 @@ export function useLiveEvents() {
         case "anime.identified":
         case "anime.needs_review":
           invalidate(
+            // An identification can be the wished-for anime arriving.
+            "wishlist",
             "animes",
             "review-queue",
             "sort-queue",
@@ -134,6 +136,7 @@ export function useLiveEvents() {
           break
         case "anime.removed":
           invalidate(
+            "wishlist",
             "animes",
             "review-queue",
             "duplicates",
@@ -150,6 +153,10 @@ export function useLiveEvents() {
           )
           break
         }
+        case "wishlist.updated":
+          // Year/type/episodes arrived from AniDB for a wishlist entry.
+          invalidate("wishlist")
+          break
         case "library.repaired":
           // A repair pass can have changed titles, numbers and artwork across
           // the whole library at once.
