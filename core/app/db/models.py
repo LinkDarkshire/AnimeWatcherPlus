@@ -215,3 +215,35 @@ class WishlistEntry(Base):
     # still pending (or the fetch failed, e.g. during a ban cool-down).
     details_fetched_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class DownloadIntegration(Base):
+    """One configured instance of a download plugin class (a qBittorrent at
+    some address, a search source with an API key, ...). Several instances
+    of the same class are allowed."""
+
+    __tablename__ = "download_integration"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    plugin_id: Mapped[str] = mapped_column(String)
+    name: Mapped[str] = mapped_column(String)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    config: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class DownloadRequest(Base):
+    """A link handed to a download client, for the "already requested" hint
+    on the download page. Not linked by foreign key: the history must
+    survive the anime/wishlist entry or the client config being deleted."""
+
+    __tablename__ = "download_request"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    anime_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    wishlist_entry_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    episode: Mapped[str | None] = mapped_column(String, nullable=True)
+    title: Mapped[str] = mapped_column(String)
+    link: Mapped[str] = mapped_column(Text)
+    client_name: Mapped[str] = mapped_column(String)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

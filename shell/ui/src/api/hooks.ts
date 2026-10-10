@@ -5,6 +5,10 @@ import type {
   AnimeDetail,
   AnimePendingActions,
   AnimeListResponse,
+  DownloadIntegration,
+  DownloadPluginsResponse,
+  DownloadSearchResponse,
+  DownloadTarget,
   DuplicateGroup,
   EmptyDirEntry,
   Folder,
@@ -19,6 +23,7 @@ import type {
   SortQueueItem,
   SortResolveResult,
   TagSummary,
+  WantedResponse,
   WishlistCandidate,
   WishlistItem,
 } from "./types"
@@ -429,5 +434,70 @@ export function useRemoveFromWishlist() {
       queryClient.invalidateQueries({ queryKey: ["wishlist"] })
       queryClient.invalidateQueries({ queryKey: ["wishlist-search"] })
     },
+  })
+}
+
+export function useDownloadPlugins() {
+  return useQuery({
+    queryKey: ["download-plugins"],
+    queryFn: () => api.get<DownloadPluginsResponse>("/api/v1/downloads/plugins"),
+    staleTime: Infinity, // only changes with a core restart
+  })
+}
+
+export function useDownloadIntegrations() {
+  return useQuery({
+    queryKey: ["download-integrations"],
+    queryFn: () => api.get<DownloadIntegration[]>("/api/v1/downloads/integrations"),
+  })
+}
+
+type IntegrationInput = { name: string; enabled: boolean; config: Record<string, unknown> }
+
+export function useSaveIntegration() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, pluginId, ...input }: IntegrationInput & { id?: number; pluginId?: string }) =>
+      id === undefined
+        ? api.post<DownloadIntegration>("/api/v1/downloads/integrations", { plugin_id: pluginId, ...input })
+        : api.put<DownloadIntegration>(`/api/v1/downloads/integrations/${id}`, input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["download-integrations"] }),
+  })
+}
+
+export function useDeleteIntegration() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.del<void>(`/api/v1/downloads/integrations/${id}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["download-integrations"] }),
+  })
+}
+
+export function useTestIntegration() {
+  return useMutation({
+    mutationFn: (id: number) =>
+      api.post<{ ok: boolean; message: string }>(`/api/v1/downloads/integrations/${id}/test`),
+  })
+}
+
+export function useWanted() {
+  return useQuery({
+    queryKey: ["downloads-wanted"],
+    queryFn: () => api.get<WantedResponse>("/api/v1/downloads/wanted"),
+  })
+}
+
+export function useDownloadSearch() {
+  return useMutation({
+    mutationFn: (target: DownloadTarget) => api.post<DownloadSearchResponse>("/api/v1/downloads/search", target),
+  })
+}
+
+export function useSendDownload() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: DownloadTarget & { client_id: number; link: string; folder_id?: number }) =>
+      api.post<{ title: string; client_name: string }>("/api/v1/downloads/send", payload),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["downloads-wanted"] }),
   })
 }

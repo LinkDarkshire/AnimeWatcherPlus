@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
     animes,
+    downloads,
     folders,
     maintenance,
     pending_actions,
@@ -27,6 +28,7 @@ from app.api.animes import review_router
 from app.api.errors import register_error_handlers
 from app.auth import require_token
 from app.config import get_settings
+from app.downloads.registry import build_registry
 from app.logging_config import configure_logging
 from app.providers.anidb import AniDBProvider
 from app.providers.base import ProviderRegistry
@@ -86,6 +88,9 @@ async def lifespan(app: FastAPI):
         job_queue=job_queue,
         provider_registry=provider_registry,
         scanner=scanner,
+        # Plugin files are user code: a broken one is reported in the UI,
+        # never allowed to keep the core from starting.
+        download_plugins=await asyncio.to_thread(build_registry, settings.plugins_dir),
     )
 
     job_queue.start()
@@ -131,6 +136,7 @@ def create_app() -> FastAPI:
     app.include_router(pending_actions.router, dependencies=[protected])
     app.include_router(maintenance.router, dependencies=[protected])
     app.include_router(wishlist.router, dependencies=[protected])
+    app.include_router(downloads.router, dependencies=[protected])
     app.include_router(ws.router)
 
     return app

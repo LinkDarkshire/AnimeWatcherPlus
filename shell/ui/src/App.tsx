@@ -7,6 +7,7 @@ import { Folders } from "@/pages/Folders"
 import { ReviewQueue } from "@/pages/ReviewQueue"
 import { Settings } from "@/pages/Settings"
 import { Wishlist } from "@/pages/Wishlist"
+import { Downloads } from "@/pages/Downloads"
 import { useLiveEvents } from "@/api/useLiveEvents"
 import { usePendingActionsCount } from "@/api/hooks"
 import { AniDbBanBanner } from "@/components/AniDbBanBanner"
@@ -24,6 +25,7 @@ function App() {
     { to: "/", label: t("nav.library"), end: true, badge: 0 },
     { to: "/missing-episodes", label: t("nav.missingEpisodes"), end: false, badge: 0 },
     { to: "/wishlist", label: t("nav.wishlist"), end: false, badge: 0 },
+    { to: "/downloads", label: t("nav.downloads"), end: false, badge: 0 },
     { to: "/review", label: t("nav.review"), end: false, badge: pendingCount },
     { to: "/folders", label: t("nav.folders"), end: false, badge: 0 },
     { to: "/settings", label: t("nav.settings"), end: false, badge: 0 },
@@ -62,6 +64,7 @@ function App() {
           <Route path="/animes/:id" element={<AnimeDetail />} />
           <Route path="/missing-episodes" element={<MissingEpisodes />} />
           <Route path="/wishlist" element={<Wishlist />} />
+          <Route path="/downloads" element={<Downloads />} />
           <Route path="/review" element={<ReviewQueue />} />
           <Route path="/folders" element={<Folders />} />
           <Route path="/settings" element={<Settings />} />

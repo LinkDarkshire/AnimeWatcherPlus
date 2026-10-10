@@ -244,3 +244,101 @@ export interface WishlistCandidate {
   in_library: boolean
   on_wishlist: boolean
 }
+
+export type DownloadPluginKind = "client" | "source"
+
+export interface PluginSettingField {
+  key: string
+  label: string
+  type: "text" | "password" | "number" | "bool" | "path"
+  default: unknown
+  required: boolean
+  help: string | null
+}
+
+/** A download client or search source class (built in or from the plugins folder). */
+export interface DownloadPlugin {
+  id: string
+  kind: DownloadPluginKind
+  name: string
+  description: string
+  builtin: boolean
+  settings_schema: PluginSettingField[]
+}
+
+export interface DownloadPluginsResponse {
+  plugins: DownloadPlugin[]
+  load_errors: { file: string; error: string }[]
+  plugins_folder: string
+}
+
+/** A configured instance of a plugin. Stored passwords are never sent back;
+ * `secrets_set` only says which ones exist. */
+export interface DownloadIntegration {
+  id: number
+  plugin_id: string
+  /** null: the plugin it belongs to is no longer installed. */
+  kind: DownloadPluginKind | null
+  name: string
+  enabled: boolean
+  config: Record<string, unknown>
+  secrets_set: string[]
+}
+
+export interface DownloadRequestInfo {
+  requested_at: string
+  client_name: string
+}
+
+export interface WantedEpisode {
+  ep_number: string
+  title: string | null
+  air_date: string | null
+  last_request: DownloadRequestInfo | null
+}
+
+export interface WantedAnime {
+  anime_id: number
+  title: string
+  year: number | null
+  media_type: string | null
+  episodes: WantedEpisode[]
+}
+
+export interface WantedWishlistItem {
+  entry_id: number
+  anidb_id: number
+  title: string
+  year: number | null
+  media_type: string | null
+  episode_count: number | null
+  last_request: DownloadRequestInfo | null
+}
+
+export interface WantedResponse {
+  missing: WantedAnime[]
+  wishlist: WantedWishlistItem[]
+}
+
+/** What a search or a download is for. */
+export interface DownloadTarget {
+  anime_id?: number
+  wishlist_entry_id?: number
+  episode?: number
+}
+
+export interface DownloadSearchResult {
+  source_name: string
+  title: string
+  link: string
+  size_bytes: number | null
+  seeders: number | null
+  published: string | null
+  info_url: string | null
+}
+
+export interface DownloadSearchResponse {
+  results: DownloadSearchResult[]
+  /** Source name -> error message, for sources that failed. */
+  errors: Record<string, string>
+}

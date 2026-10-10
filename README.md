@@ -111,6 +111,25 @@ Bleibt das Fenster leer, ist meist der DMA-BUF-Renderer von WebKitGTK
 schuld; das Skript schaltet ihn deshalb standardmäßig ab
 (`WEBKIT_DISABLE_DMABUF_RENDERER=1`).
 
+## Downloads & eigene Plugins
+
+Die Download-Seite listet bereits ausgestrahlte fehlende Folgen und
+Wunschlisten-Animes. Links werden an einen Download-Client übergeben, der in
+den Download-Ordner der App lädt; dort erkennt und sortiert die App die
+Dateien wie gewohnt.
+
+Zwei Arten von Plugin-Klassen (`core/app/downloads/base.py`):
+
+- **`DownloadClient`** nimmt Links entgegen. Eingebaut: qBittorrent (Web-UI-API)
+  und JDownloader 2 (über die Erweiterung „Folder Watch“).
+- **`SearchSource`** findet Links zu einer Folge oder Serie.
+
+Eigene Plugins: eine `.py`-Datei pro Plugin in den Ordner `plugins` im
+App-Datenverzeichnis legen und die App neu starten. Zwei funktionsfähige,
+kommentierte Vorlagen liegen in `core/plugin_examples/`. Die Einstellungen,
+die ein Plugin in `settings_schema` deklariert, erscheinen automatisch als
+Formular auf der Download-Seite.
+
 ## Installer bauen (Release)
 
 Einmalig: Updater-Signierschlüssel erzeugen (bleibt außerhalb des Repos, wird

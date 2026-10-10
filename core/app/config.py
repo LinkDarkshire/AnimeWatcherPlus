@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     def logs_dir(self) -> Path:
         return self.data_dir / "logs"
 
+    @property
+    def plugins_dir(self) -> Path:
+        """User-supplied download plugins (one .py file per plugin)."""
+        return self.data_dir / "plugins"
+
     def ensure_dirs(self) -> None:
         for d in (self.data_dir, self.logs_dir):
             d.mkdir(parents=True, exist_ok=True)

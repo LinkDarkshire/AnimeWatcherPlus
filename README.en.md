@@ -112,6 +112,23 @@ If the window stays blank, WebKitGTK's DMA-BUF renderer is the usual cause;
 the script therefore disables it by default
 (`WEBKIT_DISABLE_DMABUF_RENDERER=1`).
 
+## Downloads & custom plugins
+
+The download page lists aired missing episodes and wishlist anime. Links are
+handed to a download client that downloads into the app's download folder,
+where the app detects and sorts the files as usual.
+
+Two kinds of plugin classes (`core/app/downloads/base.py`):
+
+- **`DownloadClient`** receives links. Built in: qBittorrent (Web UI API) and
+  JDownloader 2 (via its "Folder Watch" extension).
+- **`SearchSource`** finds links for an episode or a series.
+
+Custom plugins: put one `.py` file per plugin into the `plugins` folder in
+the app's data directory and restart the app. Two working, commented
+templates are in `core/plugin_examples/`. The settings a plugin declares in
+`settings_schema` show up as a form on the download page automatically.
+
 ## Building the installer (release)
 
 One-time setup: generate the updater signing key (stays outside the repo,

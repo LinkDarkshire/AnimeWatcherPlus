@@ -145,6 +145,29 @@ class CompletenessRepo:
             missing.append(MissingEpisode(ep_number=ep_number, title=title, air_date=air_date))
         return missing
 
+    async def all_missing(self) -> list[tuple[int, MissingEpisode]]:
+        """Every missing episode of every identified anime as (anime_id,
+        episode), in episode order per anime -- the download page's input.
+        One query for the whole library, deduplicated like
+        `missing_for_anime`."""
+        rows = (
+            await self.session.execute(
+                select(ExpectedEpisode.anime_id, ExpectedEpisode.ep_number, ExpectedEpisode.title, ExpectedEpisode.air_date)
+                .join(Anime, Anime.id == ExpectedEpisode.anime_id)
+                .where(Anime.ident_status == "identified", _EXPECTED_IS_NUMBERED, ~_LOCAL_FILE_EXISTS)
+                .order_by(ExpectedEpisode.anime_id, _EXPECTED_NUMBER)
+            )
+        ).all()
+        seen: set[tuple[int, int]] = set()
+        result: list[tuple[int, MissingEpisode]] = []
+        for anime_id, ep_number, title, air_date in rows:
+            key = (anime_id, int(ep_number))
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append((anime_id, MissingEpisode(ep_number=ep_number, title=title, air_date=air_date)))
+        return result
+
     async def list_incomplete(self, page: int, size: int) -> tuple[list[tuple[Anime, int]], int]:
         """One page of the global "missing episodes" view: every identified
         anime that has at least one expected episode without a file, newest
