@@ -64,7 +64,7 @@ python -m uvicorn app.main:app --port 8000
 ```
 
 Migrationen (`alembic upgrade head`) laufen automatisch beim Start. App-Daten
-liegen unter `%APPDATA%/AnimeWatcherPlus` bzw. `~/.local/share/animewatcherplus`.
+liegen unter `%APPDATA%/AnimeWatcherPlus` bzw. `~/.local/share/AnimeWatcherPlus`.
 
 Tests: `python -m pytest` · Lint: `python -m ruff check app tests`
 
@@ -90,6 +90,26 @@ Der Rust-Supervisor generiert ein Sitzungs-Token, startet den Core aus
 `core/.venv` auf einem freien Port und pollt `/health`, bevor das Fenster
 öffnet. Das Frontend fragt Port/Token per `get_connection_info`-Command ab.
 Das ist nur der Dev-Workflow — für einen installierbaren Build siehe unten.
+
+## Linux: Starten per Skript
+
+```bash
+./dev_start.sh            # Desktop-App (Tauri-Fenster)
+./dev_start.sh --browser  # nur Core + UI im Browser, ohne Tauri
+./dev_start.sh --setup    # nur einrichten/kompilieren, nicht starten
+```
+
+Das Gegenstück zu `dev_start.bat`. Alles läuft in einem Distrobox-Container
+(`awp-dev`, Fedora 44), weil Tauri unter Linux WebKitGTK-/GTK-Entwicklungs-
+pakete braucht, die sich auf unveränderlichen Systemen wie Bazzite oder
+Silverblue nicht auf dem Host installieren lassen. Das Fenster erscheint
+trotzdem normal auf dem Desktop. Der erste Start richtet Container,
+Python-Umgebung und npm-Pakete ein und kompiliert die Shell (einige Minuten),
+danach startet die App in Sekunden. Voraussetzung ist nur `distrobox`.
+
+Bleibt das Fenster leer, ist meist der DMA-BUF-Renderer von WebKitGTK
+schuld; das Skript schaltet ihn deshalb standardmäßig ab
+(`WEBKIT_DISABLE_DMABUF_RENDERER=1`).
 
 ## Installer bauen (Release)
 
