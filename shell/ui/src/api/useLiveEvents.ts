@@ -160,6 +160,10 @@ export function useLiveEvents() {
           // Year/type/episodes arrived from AniDB for a wishlist entry.
           invalidate("wishlist", "downloads-wanted")
           break
+        case "anidb.activity":
+          // The full status snapshot comes with the event -- no refetch needed.
+          queryClient.setQueryData(["anidb-status"], payload.data)
+          break
         case "library.repaired":
           // A repair pass can have changed titles, numbers and artwork across
           // the whole library at once.

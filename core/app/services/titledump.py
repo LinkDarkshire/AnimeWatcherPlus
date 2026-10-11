@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import Settings
 from app.db.models import AnidbTitleEntry, Setting
 from app.db.session import session_scope
+from app.providers.anidb_activity import AniDBActivity
 from app.services.settings_store import get_setting
 
 logger = structlog.get_logger(__name__)
@@ -96,7 +97,7 @@ async def import_title_dump(session: AsyncSession, xml_bytes_gz: bytes) -> int:
     return len(rows)
 
 
-async def ensure_title_dump_imported(settings: Settings) -> None:
+async def ensure_title_dump_imported(settings: Settings, activity: AniDBActivity | None = None) -> None:
     """Runs once at startup (as a background job): downloads and imports the
     title dump when the local index is empty or older than
     TITLE_DUMP_MAX_AGE_S. Without the age check a library would never learn
@@ -110,12 +111,18 @@ async def ensure_title_dump_imported(settings: Settings) -> None:
     fresh = isinstance(imported_at, (int, float)) and time.time() - imported_at < TITLE_DUMP_MAX_AGE_S
     if count > 0 and fresh:
         return
-    async with httpx.AsyncClient() as client:
-        try:
-            xml_bytes_gz = await download_title_dump(client)
-        except httpx.HTTPError:
-            logger.exception("titledump_download_failed")
-            return
+    if activity is not None:
+        await activity.set("requesting", "Titelliste")
+    try:
+        async with httpx.AsyncClient() as client:
+            try:
+                xml_bytes_gz = await download_title_dump(client)
+            except httpx.HTTPError:
+                logger.exception("titledump_download_failed")
+                return
+    finally:
+        if activity is not None:
+            await activity.set("idle")
     async with session_scope() as session:
         await import_title_dump(session, xml_bytes_gz)
         row = await session.get(Setting, TITLE_DUMP_IMPORTED_AT_KEY)

@@ -385,3 +385,24 @@ export interface ActiveDownload {
   wishlist_entry_id: number | null
   status: DownloadStatus
 }
+
+/** What the core is doing with AniDB right now (pushed live as "anidb.activity"). */
+export interface AniDbStatus {
+  state: "idle" | "waiting" | "requesting"
+  /** What is being looked up, e.g. "Frieren (#17617)". */
+  detail: string | null
+  /** Seconds until the next request may go out (rate limit). */
+  wait_seconds: number | null
+  requests_today: number
+  daily_cap: number | null
+  banned_until: number | null
+  paused: boolean
+  /** Why no request can go out right now, and until when (epoch seconds). */
+  blocked_reason: "ban" | "daily_cap" | "paused" | null
+  blocked_until: number | null
+  /** When the work that failed during a block was queued again (epoch seconds). */
+  resumed_at: number | null
+  queued_jobs: number
+  waiting_anime: number
+  waiting_wishlist: number
+}

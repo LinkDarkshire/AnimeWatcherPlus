@@ -81,6 +81,12 @@ class JobQueue:
         self._queue.put_nowait(job)
         return job
 
+    def pending_count(self, job_types: frozenset[str] | set[str]) -> int:
+        """Queued or running jobs of these types."""
+        return sum(
+            1 for job in self.jobs.values() if job.job_type in job_types and job.status in ("queued", "running")
+        )
+
     async def _worker(self) -> None:
         while True:
             job = await self._queue.get()

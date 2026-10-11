@@ -714,3 +714,21 @@ async def test_folder_back_online_clears_offline_flag(scanner_env, tmp_path) -> 
     await session.refresh(folder)
     assert folder.offline is False
     assert folder.id in scanner._observers  # watcher attached late
+
+
+@pytest.mark.asyncio
+async def test_pending_identifications_can_be_requeued(scanner_env, tmp_path) -> None:
+    scanner, session = scanner_env
+    root = tmp_path / "content"
+    folder = await FolderRepo(session).create(str(root), "content", "Content")
+    for name in ("Pending A", "Pending B", "Done"):
+        (root / name).mkdir(parents=True)
+        anime = await AnimeRepo(session).create_pending(folder.id, str(root / name), name)
+        if name == "Done":
+            anime.ident_status = "identified"
+    await session.commit()
+
+    before = len(scanner._job_queue.jobs)
+    assert await scanner.enqueue_pending_identifications() == 2
+    new_jobs = list(scanner._job_queue.jobs.values())[before:]
+    assert [job.job_type for job in new_jobs] == ["identify", "identify"]

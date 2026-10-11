@@ -18,6 +18,7 @@ from app.domain.titles import (
     pick_variants,
     resolve_title,
 )
+from app.providers.anidb_activity import AniDBActivity, describe
 from app.providers.base import CircuitBreaker, MetadataProvider, ProviderBannedError, RateLimiter
 
 logger = structlog.get_logger(__name__)
@@ -84,6 +85,32 @@ class AniDBProvider(MetadataProvider):
         # process restart during the ~24h ban window (Kap. 9.3 Edge Case 6),
         # so a restart can't accidentally resume hammering a still-banned API.
         self._banned_until: float = 0.0
+        self.activity = AniDBActivity()
+
+    @property
+    def limiter(self) -> RateLimiter:
+        return self._limiter
+
+    @property
+    def banned_until(self) -> float:
+        return self._banned_until
+
+    def blocked(self) -> tuple[str | None, float | None]:
+        """(reason, until epoch) while no request can go out: "ban" (AniDB
+        banned this client), "daily_cap" (our own daily limit is used up),
+        "paused" (too many failures in a row); (None, None) otherwise."""
+        now = time.time()
+        if self._banned_until > now:
+            return "ban", self._banned_until
+        cap = self._limiter.daily_cap
+        if cap is not None and self._limiter.calls_today >= cap:
+            tomorrow = time.localtime(now + 86400)
+            midnight = time.mktime((tomorrow.tm_year, tomorrow.tm_mon, tomorrow.tm_mday, 0, 0, 0, 0, 0, -1))
+            return "daily_cap", midnight
+        remaining = self.circuit_breaker.remaining_s()
+        if remaining > 0:
+            return "paused", now + remaining
+        return None, None
 
     async def load_ban_state(self) -> None:
         """Restores a still-active ban across a process restart. Call once
@@ -152,7 +179,10 @@ class AniDBProvider(MetadataProvider):
         if self.circuit_breaker.is_open():
             raise ProviderBannedError("AniDB circuit breaker is open")
 
-        xml_bytes = await self._request_with_retry(aid)
+        try:
+            xml_bytes = await self._request_with_retry(aid)
+        finally:
+            await self.activity.set("idle")
         if xml_bytes is None:
             self.circuit_breaker.record_failure()
             return None
@@ -180,7 +210,11 @@ class AniDBProvider(MetadataProvider):
         backoff = 1.0
         for attempt in range(max_retries):
             try:
+                wait = self._limiter.pending_wait()
+                if wait > 0:
+                    await self.activity.set("waiting", describe(aid), wait)
                 await self._limiter.acquire()
+                await self.activity.set("requesting", describe(aid))
                 response = await self._client.get(
                     ANIDB_HTTP_API,
                     params={

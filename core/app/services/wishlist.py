@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
+from functools import partial
 
 import structlog
 from sqlalchemy import select
@@ -10,8 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import AnidbTitleEntry, Anime, WishlistEntry
 from app.db.session import session_scope
 from app.domain.titles import pick_variants, resolve_title, variants_from_metadata
+from app.providers.anidb_activity import anidb_subject
 from app.providers.base import ProviderRegistry
-from app.services.jobs import EventBus
+from app.services.jobs import EventBus, JobQueue
 from app.services.settings_store import get_display_title_order
 from app.services.titledump import fuzzy_match
 
@@ -180,8 +182,10 @@ async def fetch_details(entry_id: int, provider_registry: ProviderRegistry, even
         if entry is None:
             return
         anidb_id = entry.anidb_id
+        title = entry.title
 
-    metadata, _ = await provider_registry.fetch_chain({"anidb": str(anidb_id)})
+    with anidb_subject(f"Wunschliste: {title}"):
+        metadata, _ = await provider_registry.fetch_chain({"anidb": str(anidb_id)})
     if metadata is None:
         logger.info("wishlist_details_unavailable", anidb_id=anidb_id)
         return
@@ -201,3 +205,15 @@ async def fetch_details(entry_id: int, provider_registry: ProviderRegistry, even
         await session.commit()
 
     await event_bus.publish("wishlist.updated", {"entry_id": entry_id})
+
+
+async def enqueue_pending_details(job_queue: JobQueue, provider_registry: ProviderRegistry, event_bus: EventBus) -> int:
+    """Re-queues the details fetch for every entry that doesn't have them
+    yet (it failed during an AniDB ban/limit)."""
+    async with session_scope() as session:
+        ids = list(
+            (await session.execute(select(WishlistEntry.id).where(WishlistEntry.details_fetched_at.is_(None)))).scalars()
+        )
+    for entry_id in ids:
+        job_queue.enqueue("wishlist_details", partial(fetch_details, entry_id, provider_registry, event_bus))
+    return len(ids)

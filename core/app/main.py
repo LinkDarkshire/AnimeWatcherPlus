@@ -6,12 +6,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import structlog
-from alembic import command
 from alembic.config import Config
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from alembic import command
 from app.api import (
+    anidb,
     animes,
     downloads,
     folders,
@@ -28,11 +29,15 @@ from app.api.animes import review_router
 from app.api.errors import register_error_handlers
 from app.auth import require_token
 from app.config import get_settings
+from app.db.session import session_scope
 from app.downloads.registry import build_registry
 from app.logging_config import configure_logging
 from app.providers.anidb import AniDBProvider
+from app.providers.anidb_activity import anidb_status, waiting_counts
 from app.providers.base import ProviderRegistry
 from app.services import pending_actions as pending_actions_service
+from app.services import wishlist as wishlist_service
+from app.services.anidb_watch import AniDBBlockWatcher
 from app.services.jobs import EventBus, JobQueue
 from app.services.scanner import ScannerService
 from app.services.titledump import ensure_title_dump_imported
@@ -94,15 +99,36 @@ async def lifespan(app: FastAPI):
     )
 
     job_queue.start()
-    job_queue.enqueue("titledump_import", lambda: ensure_title_dump_imported(settings))
+    # Every change of the AniDB activity goes to the UI as a live event, so
+    # the header can show when a request is actually going out.
+    async def publish_anidb_activity() -> None:
+        status = anidb_status(anidb_provider, job_queue)
+        async with session_scope() as session:
+            status.update(await waiting_counts(session))
+        await event_bus.publish("anidb.activity", status)
+
+    anidb_provider.activity.subscribe(publish_anidb_activity)
+
+    job_queue.enqueue(
+        "titledump_import", lambda: ensure_title_dump_imported(settings, anidb_provider.activity)
+    )
     # Before the scans and rescans: they read and write the same titles, and
     # the rename queue must never be computed from the pre-variant ones.
     job_queue.enqueue("title_backfill", lambda: run_startup_title_backfill(settings, event_bus))
     await scanner.start()
+    block_watcher = AniDBBlockWatcher(
+        anidb_provider,
+        resume=[
+            scanner.enqueue_pending_identifications,
+            lambda: wishlist_service.enqueue_pending_details(job_queue, provider_registry, event_bus),
+        ],
+    )
+    block_watcher.start()
     logger.info("core_started", data_dir=str(settings.data_dir))
 
     yield
 
+    await block_watcher.stop()
     await scanner.stop()
     await job_queue.stop()
 
@@ -137,6 +163,7 @@ def create_app() -> FastAPI:
     app.include_router(maintenance.router, dependencies=[protected])
     app.include_router(wishlist.router, dependencies=[protected])
     app.include_router(downloads.router, dependencies=[protected])
+    app.include_router(anidb.router, dependencies=[protected])
     app.include_router(ws.router)
 
     return app

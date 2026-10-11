@@ -10,6 +10,7 @@ import { Wishlist } from "@/pages/Wishlist"
 import { Downloads } from "@/pages/Downloads"
 import { useLiveEvents } from "@/api/useLiveEvents"
 import { usePendingActionsCount } from "@/api/hooks"
+import { AniDbActivity } from "@/components/AniDbActivity"
 import { AniDbBanBanner } from "@/components/AniDbBanBanner"
 import { EmptyFolderPrompt } from "@/components/EmptyFolderPrompt"
 import { Badge } from "@/components/ui/badge"
@@ -55,6 +56,7 @@ function App() {
             </NavLink>
           ))}
         </nav>
+        <AniDbActivity />
       </header>
       <AniDbBanBanner />
       <EmptyFolderPrompt />

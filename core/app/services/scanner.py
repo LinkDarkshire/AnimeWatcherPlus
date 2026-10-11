@@ -409,6 +409,35 @@ class ScannerService:
                 session, self._settings, anime, anime_dir, self._provider_registry, self._event_bus
             )
 
+    async def enqueue_pending_identifications(self) -> int:
+        """Puts every anime still waiting for identification back in the
+        queue -- after an AniDB ban/limit ended, those jobs had all failed
+        and nothing else would retry them before the next restart."""
+        from sqlalchemy import select
+
+        from app.db.models import Anime
+
+        async with session_scope() as session:
+            rows = (
+                await session.execute(
+                    select(Anime.id, Anime.directory_path).where(Anime.ident_status == "pending")
+                )
+            ).all()
+        for anime_id, directory in rows:
+            self._job_queue.enqueue("identify", partial(self._run_identify_if_pending, anime_id, Path(directory)))
+        return len(rows)
+
+    async def _run_identify_if_pending(self, anime_id: int, anime_dir: Path) -> None:
+        # Re-checked when the job runs: a scan may have queued the same
+        # anime meanwhile, and a second identification would be wasted.
+        async with session_scope() as session:
+            anime = await AnimeRepo(session).get(anime_id)
+            if anime is None or anime.ident_status != "pending":
+                return
+            await identification.identify_anime(
+                session, self._settings, anime, anime_dir, self._provider_registry, self._event_bus
+            )
+
     async def enqueue_metadata_rescan(self, *, ignore_staleness: bool) -> int:
         """Re-checks AniDB for already-identified anime (new episodes, changed
         metadata). Run automatically on startup for everything the staleness

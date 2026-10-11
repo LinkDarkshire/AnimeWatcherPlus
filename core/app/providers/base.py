@@ -48,6 +48,15 @@ class RateLimiter:
         self._call_day: str | None = None
         self._call_count = 0
 
+    def pending_wait(self) -> float:
+        """Seconds until the next call is allowed (for display; acquire()
+        is what actually enforces it)."""
+        return max(0.0, self.min_interval_s - (time.monotonic() - self._last_call))
+
+    @property
+    def calls_today(self) -> int:
+        return self._call_count if self._call_day == time.strftime("%Y-%m-%d") else 0
+
     async def acquire(self) -> None:
         async with self._lock:
             today = time.strftime("%Y-%m-%d")
@@ -84,6 +93,12 @@ class CircuitBreaker:
             self._failures = 0
             return False
         return True
+
+    def remaining_s(self) -> float:
+        """Seconds until the breaker closes again (0 when closed)."""
+        if not self.is_open() or self._opened_at is None:
+            return 0.0
+        return max(0.0, self.cooldown_s - (time.monotonic() - self._opened_at))
 
     def record_success(self) -> None:
         self._failures = 0

@@ -13,6 +13,7 @@ from app.db.models import Anime
 from app.db.repositories import AnimeRepo, JobLogRepo, LocalEpisodeRepo
 from app.domain.metadata import AnimeMetadata
 from app.domain.titles import resolve_title, variants_from_metadata
+from app.providers.anidb_activity import anidb_subject
 from app.providers.base import ProviderRegistry
 from app.services import artwork, nfo, sorter
 from app.services.jobs import EventBus
@@ -35,7 +36,7 @@ def _parse_air_date(value: str | None) -> dt.date | None:
         return None
 
 
-async def identify_anime(
+async def _identify_anime(
     session: AsyncSession,
     settings: Settings,
     anime: Anime,
@@ -107,7 +108,7 @@ async def identify_anime(
     )
 
 
-async def manual_identify(
+async def _manual_identify(
     session: AsyncSession,
     settings: Settings,
     anime: Anime,
@@ -139,6 +140,34 @@ async def manual_identify(
         match_score=None,
         job_result="manual_identified",
     )
+
+
+async def identify_anime(
+    session: AsyncSession,
+    settings: Settings,
+    anime: Anime,
+    anime_dir: Path,
+    provider_registry: ProviderRegistry,
+    event_bus: EventBus,
+) -> Anime:
+    # The AniDB activity display names what is being looked up.
+    with anidb_subject(anime.title or anime_dir.name):
+        return await _identify_anime(session, settings, anime, anime_dir, provider_registry, event_bus)
+
+
+async def manual_identify(
+    session: AsyncSession,
+    settings: Settings,
+    anime: Anime,
+    anime_dir: Path,
+    anidb_id: int,
+    provider_registry: ProviderRegistry,
+    event_bus: EventBus,
+) -> Anime:
+    with anidb_subject(anime.title or anime_dir.name):
+        return await _manual_identify(
+            session, settings, anime, anime_dir, anidb_id, provider_registry, event_bus
+        )
 
 
 async def _finalize_identification(

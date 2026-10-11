@@ -3,6 +3,7 @@ import { api } from "./client"
 import { toQueryString, type AnimeFilters } from "@/lib/animeFilters"
 import type {
   ActiveDownload,
+  AniDbStatus,
   AnimeDetail,
   AnimePendingActions,
   AnimeListResponse,
@@ -535,5 +536,18 @@ export function useDismissDownload() {
   return useMutation({
     mutationFn: (requestId: number) => api.post<void>(`/api/v1/downloads/requests/${requestId}/dismiss`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["downloads-active"] }),
+  })
+}
+
+/** Live AniDB activity for the header. Kept current by the "anidb.activity"
+ * live event; the polling is only a fallback (e.g. for the queue count). */
+export function useAniDbStatus() {
+  return useQuery({
+    queryKey: ["anidb-status"],
+    queryFn: () => api.get<AniDbStatus>("/api/v1/anidb/status"),
+    refetchInterval: (query) => {
+      const data = query.state.data
+      return data && (data.state !== "idle" || data.queued_jobs > 0) ? 5_000 : 30_000
+    },
   })
 }

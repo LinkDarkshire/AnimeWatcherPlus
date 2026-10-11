@@ -917,3 +917,40 @@ async def test_put_settings_rejects_unknown_keys_and_invalid_values(client, valu
 async def test_paging_parameters_are_validated(client, url) -> None:
     response = await client.get(url)
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_anidb_status_reports_block_and_waiting_work(db_session, tmp_path) -> None:
+    import time
+
+    from app.api import anidb as anidb_api
+    from app.db.repositories import AnimeRepo, FolderRepo
+    from app.providers.anidb import AniDBProvider
+    from app.providers.base import ProviderRegistry
+
+    settings = Settings(data_dir=tmp_path)
+    provider = AniDBProvider(settings)
+    provider._banned_until = time.time() + 3600
+    registry = ProviderRegistry()
+    registry.register(provider)
+    state = AppState(
+        settings=settings,
+        event_bus=EventBus(),
+        job_queue=MagicMock(pending_count=MagicMock(return_value=0)),
+        provider_registry=registry,
+        scanner=MagicMock(),
+    )
+    folder = await FolderRepo(db_session).create(str(tmp_path / "c"), "content", "C")
+    await AnimeRepo(db_session).create_pending(folder.id, str(tmp_path / "c" / "A"), "A")
+
+    status_app = FastAPI()
+    status_app.include_router(anidb_api.router)
+    status_app.dependency_overrides[get_db] = _make_db_override(db_session)
+    status_app.dependency_overrides[get_app_state] = lambda: state
+    async with AsyncClient(transport=ASGITransport(app=status_app), base_url="http://test") as c:
+        body = (await c.get("/api/v1/anidb/status")).json()
+
+    assert body["blocked_reason"] == "ban"
+    assert body["blocked_until"] == pytest.approx(provider.banned_until)
+    assert body["waiting_anime"] == 1
+    assert body["state"] == "idle"
