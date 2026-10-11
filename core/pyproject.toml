@@ -16,6 +16,7 @@ dependencies = [
     "rapidfuzz>=3.10",
     "structlog>=24.4",
     "anyio>=4.6",
+    "cryptography>=42",  # MyJDownloader API encryption (AES-CBC)
 ]
 
 [project.optional-dependencies]

@@ -49,7 +49,7 @@ def test_registry_loads_example_plugins_and_reports_broken_files(tmp_path) -> No
     registry = build_registry(plugins)
 
     assert {"qbittorrent", "jdownloader", "beispiel_linkliste", "beispiel_linkdatei"} <= set(registry.classes)
-    assert registry.builtin_ids == {"qbittorrent", "jdownloader"}
+    assert registry.builtin_ids == {"qbittorrent", "jdownloader", "myjdownloader"}
     assert {e.file for e in registry.load_errors} == {"kaputt.py", "leer.py"}
     assert (plugins / "LIESMICH.txt").exists()
 

@@ -18,7 +18,7 @@ class JDownloaderClient(DownloadClient):
     this app and JDownloader can reach."""
 
     id = "jdownloader"
-    name = "JDownloader 2"
+    name = "JDownloader 2 (Folder Watch)"
     description = "Übergibt Direkt-Links über die Ordnerüberwachung (Folder Watch) an JDownloader."
     settings_schema = (
         SettingField(
