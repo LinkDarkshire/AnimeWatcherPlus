@@ -8,6 +8,7 @@ import type {
   DownloadIntegration,
   DownloadPluginsResponse,
   DownloadSearchResponse,
+  DownloadSeriesHit,
   DownloadTarget,
   DuplicateGroup,
   EmptyDirEntry,
@@ -490,6 +491,18 @@ export function useWanted() {
 export function useDownloadSearch() {
   return useMutation({
     mutationFn: (target: DownloadTarget) => api.post<DownloadSearchResponse>("/api/v1/downloads/search", target),
+  })
+}
+
+/** Step 2 of a two-stage source: the links on the series page the user picked. */
+export function useDownloadReleases() {
+  return useMutation({
+    mutationFn: ({ target, series }: { target: DownloadTarget; series: DownloadSeriesHit }) =>
+      api.post<DownloadSearchResponse>("/api/v1/downloads/releases", {
+        ...target,
+        integration_id: series.integration_id,
+        series: { title: series.title, url: series.url, extra: series.extra },
+      }),
   })
 }
 

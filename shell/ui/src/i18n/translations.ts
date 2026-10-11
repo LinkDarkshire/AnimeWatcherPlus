@@ -256,6 +256,13 @@ const de = {
   "downloads.noDownloadFolder": "Kein Download-Ordner angelegt – der Client lädt in seinen eigenen Standardordner, den die App nicht überwacht.",
   "downloads.seeders": "{count} Seeder",
   "downloads.close": "Schließen",
+  "downloads.pickSeries": "Mehrere Serien gefunden – bitte die richtige auswählen:",
+  "downloads.pick": "Auswählen",
+  "downloads.otherSeries": "Andere Serie wählen",
+  "downloads.stream": "Stream",
+  "downloads.open": "Öffnen",
+  "downloads.openInBrowser": "Im Browser öffnen",
+  "downloads.browserHint": "Führt über eine Zwischenseite: im Browser öffnen, durchklicken und den endgültigen Link unten einfügen.",
 }
 
 export type TranslationKey = keyof typeof de
@@ -507,6 +514,13 @@ const en: Record<TranslationKey, string> = {
   "downloads.noDownloadFolder": "No download folder set up – the client downloads into its own default folder, which the app doesn't watch.",
   "downloads.seeders": "{count} seeders",
   "downloads.close": "Close",
+  "downloads.pickSeries": "Several series found – please pick the right one:",
+  "downloads.pick": "Pick",
+  "downloads.otherSeries": "Pick another series",
+  "downloads.stream": "Stream",
+  "downloads.open": "Open",
+  "downloads.openInBrowser": "Open in browser",
+  "downloads.browserHint": "Leads through an intermediate page: open it in the browser, click through and paste the final link below.",
 }
 
 export const translations: Record<Language, Record<TranslationKey, string>> = { de, en }

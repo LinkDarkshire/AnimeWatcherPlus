@@ -154,13 +154,33 @@ fn open_folder(path: String) -> Result<(), String> {
     result.map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// Opens a web page in the user's default browser -- for download links that
+/// lead through an intermediate page (URL shortener, captcha) the user has to
+/// click through by hand. Only http(s): anything else could start a local
+/// program through the OS's URL handlers.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    let lowered = url.to_ascii_lowercase();
+    if !(lowered.starts_with("http://") || lowered.starts_with("https://")) {
+        return Err(format!("not a web address: {url}"));
+    }
+    let result = if cfg!(target_os = "windows") {
+        Command::new("explorer").arg(&url).spawn()
+    } else if cfg!(target_os = "macos") {
+        Command::new("open").arg(&url).spawn()
+    } else {
+        Command::new("xdg-open").arg(&url).spawn()
+    };
+    result.map(|_| ()).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .invoke_handler(tauri::generate_handler![get_connection_info, open_folder])
+        .invoke_handler(tauri::generate_handler![get_connection_info, open_folder, open_url])
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(

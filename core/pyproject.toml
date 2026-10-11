@@ -17,6 +17,7 @@ dependencies = [
     "structlog>=24.4",
     "anyio>=4.6",
     "cryptography>=42",  # MyJDownloader API encryption (AES-CBC)
+    "beautifulsoup4>=4.12",  # HTML parsing for search-source plugins (HtmlSiteSource)
 ]
 
 [project.optional-dependencies]

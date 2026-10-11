@@ -20,6 +20,17 @@ export async function openFolder(path: string): Promise<void> {
   await invoke("open_folder", { path })
 }
 
+/** Opens a web page in the default browser (desktop shell) or a new tab
+ * (browser dev mode). Only http(s) addresses. */
+export async function openExternal(url: string): Promise<void> {
+  if (isTauri()) {
+    const { invoke } = await import("@tauri-apps/api/core")
+    await invoke("open_url", { url })
+  } else {
+    window.open(url, "_blank", "noopener,noreferrer")
+  }
+}
+
 let connectionPromise: Promise<Connection> | null = null
 
 async function resolveConnection(): Promise<Connection> {

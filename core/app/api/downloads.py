@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_app_state, get_db
 from app.db.models import DownloadIntegration
 from app.downloads import service
-from app.downloads.base import PluginError
+from app.downloads.base import PluginError, SeriesHit
 from app.downloads.registry import kind_of
 from app.state import AppState
 
@@ -260,11 +260,61 @@ class SearchResultOut(BaseModel):
     seeders: int | None
     published: str | None
     info_url: str | None
+    hoster: str | None
+    kind: str
+    details: dict[str, str]
+    needs_browser: bool
+
+
+class SeriesHitIn(BaseModel):
+    title: str
+    url: str
+    extra: dict[str, Any] = {}
+
+
+class SeriesHitOut(SeriesHitIn):
+    integration_id: int
+    source_name: str
 
 
 class SearchResponse(BaseModel):
     results: list[SearchResultOut]
+    # Two-stage sources with several matching series: the user picks one,
+    # then POST /releases lists its links.
+    series: list[SeriesHitOut]
     errors: dict[str, str]
+
+
+def _search_response(outcome: service.SearchOutcome) -> SearchResponse:
+    return SearchResponse(
+        results=[
+            SearchResultOut(
+                source_name=r.source_name,
+                title=r.result.title,
+                link=r.result.link,
+                size_bytes=r.result.size_bytes,
+                seeders=r.result.seeders,
+                published=r.result.published,
+                info_url=r.result.info_url,
+                hoster=r.result.hoster,
+                kind=r.result.kind,
+                details=r.result.details,
+                needs_browser=r.result.needs_browser,
+            )
+            for r in outcome.results
+        ],
+        series=[
+            SeriesHitOut(
+                integration_id=s.integration_id,
+                source_name=s.source_name,
+                title=s.hit.title,
+                url=s.hit.url,
+                extra=s.hit.extra,
+            )
+            for s in outcome.series
+        ],
+        errors=outcome.errors,
+    )
 
 
 @router.post("/search", response_model=SearchResponse)
@@ -278,21 +328,36 @@ async def search(
     except service.DownloadError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     outcome = await service.search(session, state.download_plugins, target)
-    return SearchResponse(
-        results=[
-            SearchResultOut(
-                source_name=r.source_name,
-                title=r.result.title,
-                link=r.result.link,
-                size_bytes=r.result.size_bytes,
-                seeders=r.result.seeders,
-                published=r.result.published,
-                info_url=r.result.info_url,
-            )
-            for r in outcome.results
-        ],
-        errors=outcome.errors,
-    )
+    return _search_response(outcome)
+
+
+class ReleasesIn(TargetIn):
+    integration_id: int
+    series: SeriesHitIn
+
+
+@router.post("/releases", response_model=SearchResponse)
+async def list_releases(
+    payload: ReleasesIn,
+    session: AsyncSession = Depends(get_db),
+    state: AppState = Depends(get_app_state),
+) -> SearchResponse:
+    """Step 2 of a two-stage source: the links on the series page the user
+    picked from /search's `series`."""
+    try:
+        target = await service.resolve_target(
+            session, anime_id=payload.anime_id, wishlist_entry_id=payload.wishlist_entry_id, episode=payload.episode
+        )
+        outcome = await service.releases(
+            session,
+            state.download_plugins,
+            target,
+            payload.integration_id,
+            SeriesHit(title=payload.series.title, url=payload.series.url, extra=payload.series.extra),
+        )
+    except service.DownloadError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _search_response(outcome)
 
 
 class SendIn(TargetIn):

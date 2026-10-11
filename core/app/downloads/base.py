@@ -109,12 +109,36 @@ class SearchQuery:
 
 @dataclass
 class SearchResult:
+    """One link the user can pick. Only `title` and `link` are required;
+    everything else is shown when present."""
+
     title: str
     link: str
     size_bytes: int | None = None
     seeders: int | None = None
     published: str | None = None  # ISO date/time, if the source has one
     info_url: str | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
+    # Which hoster/mirror the link points to ("MEGA", "1fichier", ...).
+    hoster: str | None = None
+    # "stream" links are shown, but never handed to a download client.
+    kind: Literal["download", "stream"] = "download"
+    # Display details as label -> value ("Sprache": "Subbed", "Format": "MKV").
+    details: dict[str, str] = field(default_factory=dict)
+    # The link leads to an intermediate page (URL shortener, captcha, ...)
+    # rather than the file: the app opens it in the browser and lets the user
+    # paste the final link instead of sending this one to a client.
+    needs_browser: bool = False
+
+
+@dataclass
+class SeriesHit:
+    """A series page found by a two-stage source's first step. `extra` is
+    passed back unchanged to `list_releases`, for anything the source needs
+    to remember (an internal id, ...); it must be JSON-serializable."""
+
+    title: str
+    url: str
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -125,3 +149,25 @@ class SearchSource(_Plugin):
     async def search(self, query: SearchQuery) -> list[SearchResult]:
         """Returns matching links, best first. Raise SearchSourceError on
         failure; return an empty list when there simply are no results."""
+
+
+class TwoStageSearchSource(SearchSource):
+    """For sites where you first find the series page and then pick an
+    episode/variant on it. The app shows the series hits, the user picks one
+    (or it's taken automatically when there is exactly one), then the
+    releases of that page are listed."""
+
+    @abstractmethod
+    async def search_series(self, query: SearchQuery) -> list[SeriesHit]:
+        """Step 1: the series pages matching the query."""
+
+    @abstractmethod
+    async def list_releases(self, series: SeriesHit, query: SearchQuery) -> list[SearchResult]:
+        """Step 2: the links on that series page -- for `query.episode` only,
+        or for every episode when it is None."""
+
+    async def search(self, query: SearchQuery) -> list[SearchResult]:
+        """One-step use (as any SearchSource): only when the series is
+        unambiguous."""
+        hits = await self.search_series(query)
+        return await self.list_releases(hits[0], query) if len(hits) == 1 else []

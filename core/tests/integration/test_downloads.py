@@ -23,6 +23,8 @@ from app.downloads import (
     SearchResult,
     SearchSource,
     SearchSourceError,
+    SeriesHit,
+    TwoStageSearchSource,
 )
 from app.downloads.clients.jdownloader import JDownloaderClient
 from app.downloads.clients.qbittorrent import QBittorrentClient
@@ -298,3 +300,51 @@ async def test_send_hands_link_to_client_and_records_request(client, db_session,
     assert episode["last_request"]["client_name"] == "JD"
     rows = (await db_session.execute(DownloadRequest.__table__.select())).all()
     assert len(rows) == 1
+
+
+class _TwoStage(TwoStageSearchSource):
+    id = "two_stage"
+    name = "TwoStage"
+
+    async def search_series(self, query: SearchQuery) -> list[SeriesHit]:
+        return [SeriesHit(title="Show", url="https://site/show/"), SeriesHit(title="Show OVA", url="https://site/ova/")]
+
+    async def list_releases(self, series: SeriesHit, query: SearchQuery) -> list[SearchResult]:
+        return [
+            SearchResult(
+                title=f"{series.title} {query.episode}",
+                link="https://short/x",
+                hoster="MEGA",
+                details={"Format": "MKV"},
+                needs_browser=True,
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_two_stage_source_offers_series_then_lists_releases(client, db_session, tmp_path, state) -> None:
+    state.download_plugins.register(_TwoStage)
+    anime_id = await _anime_with_episodes(db_session, tmp_path, "Show", 9, [(1, None)])
+    source = (await client.post("/api/v1/downloads/integrations", json={"plugin_id": "two_stage", "name": "TS"})).json()
+
+    searched = (await client.post("/api/v1/downloads/search", json={"anime_id": anime_id, "episode": 1})).json()
+    assert searched["results"] == []
+    assert [s["title"] for s in searched["series"]] == ["Show", "Show OVA"]
+    assert searched["series"][0]["integration_id"] == source["id"]
+
+    picked = searched["series"][1]
+    releases = (
+        await client.post(
+            "/api/v1/downloads/releases",
+            json={
+                "anime_id": anime_id,
+                "episode": 1,
+                "integration_id": picked["integration_id"],
+                "series": {"title": picked["title"], "url": picked["url"]},
+            },
+        )
+    ).json()
+    [release] = releases["results"]
+    assert release["title"] == "Show OVA 1"
+    assert release["needs_browser"] is True
+    assert release["details"] == {"Format": "MKV"} and release["hoster"] == "MEGA"

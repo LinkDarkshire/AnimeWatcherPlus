@@ -128,7 +128,12 @@ Two kinds of plugin classes (`core/app/downloads/base.py`):
 
 Custom plugins: put one `.py` file per plugin into the `plugins` folder in
 the app's data directory and restart the app. Two working, commented
-templates are in `core/plugin_examples/`. The settings a plugin declares in
+templates are in `core/plugin_examples/`.
+For websites there is `HtmlSiteSource`: copy the template
+`core/plugin_examples/vorlage_webseite.py` and fill in only the address and
+CSS selectors (search → pick series → variants per episode with
+language/format/size/hoster). Links through intermediate pages (URL
+shorteners) are opened in the browser; the final link is pasted by hand. The settings a plugin declares in
 `settings_schema` show up as a form on the download page automatically.
 
 ## Building the installer (release)

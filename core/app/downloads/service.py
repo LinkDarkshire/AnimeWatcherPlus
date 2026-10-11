@@ -24,7 +24,9 @@ from app.downloads.base import (
     SearchQuery,
     SearchResult,
     SearchSource,
+    SeriesHit,
     SettingField,
+    TwoStageSearchSource,
     _Plugin,
 )
 from app.downloads.registry import DownloadPluginRegistry, kind_of
@@ -289,9 +291,35 @@ class SourceResult:
 
 
 @dataclass
+class SourceSeries:
+    """A series hit of a two-stage source the user still has to pick."""
+
+    integration_id: int
+    source_name: str
+    hit: SeriesHit
+
+
+@dataclass
 class SearchOutcome:
     results: list[SourceResult] = field(default_factory=list)
+    series: list[SourceSeries] = field(default_factory=list)
     errors: dict[str, str] = field(default_factory=dict)
+
+
+async def _guarded(outcome: SearchOutcome, source_name: str, coro: Any) -> Any:
+    """Runs one source call; any failure becomes an entry in
+    `outcome.errors` instead of an exception, so other sources' results
+    survive it."""
+    try:
+        return await asyncio.wait_for(coro, timeout=60)
+    except PluginError as exc:
+        outcome.errors[source_name] = str(exc)
+    except TimeoutError:
+        outcome.errors[source_name] = "Zeitüberschreitung"
+    except Exception as exc:  # user plugin code: any failure is reported, never raised
+        logger.exception("search_source_failed", source=source_name)
+        outcome.errors[source_name] = f"Interner Fehler: {type(exc).__name__}: {exc}"
+    return None
 
 
 async def search(session: AsyncSession, registry: DownloadPluginRegistry, target: Target) -> SearchOutcome:
@@ -305,20 +333,50 @@ async def search(session: AsyncSession, registry: DownloadPluginRegistry, target
     async def run(integration: DownloadIntegration) -> None:
         plugin = instantiate(registry, integration)
         assert isinstance(plugin, SearchSource)
+        name = integration.name
         try:
-            results = await asyncio.wait_for(plugin.search(query), timeout=60)
-            outcome.results.extend(SourceResult(source_name=integration.name, result=r) for r in results)
-        except PluginError as exc:
-            outcome.errors[integration.name] = str(exc)
-        except TimeoutError:
-            outcome.errors[integration.name] = "Zeitüberschreitung"
-        except Exception as exc:
-            logger.exception("search_source_failed", source=integration.name)
-            outcome.errors[integration.name] = f"Interner Fehler: {type(exc).__name__}: {exc}"
+            if isinstance(plugin, TwoStageSearchSource):
+                hits = await _guarded(outcome, name, plugin.search_series(query)) or []
+                if len(hits) == 1:
+                    # Unambiguous: skip the pick and go straight to the releases.
+                    results = await _guarded(outcome, name, plugin.list_releases(hits[0], query)) or []
+                    outcome.results.extend(SourceResult(source_name=name, result=r) for r in results)
+                else:
+                    outcome.series.extend(
+                        SourceSeries(integration_id=integration.id, source_name=name, hit=hit) for hit in hits
+                    )
+            else:
+                results = await _guarded(outcome, name, plugin.search(query)) or []
+                outcome.results.extend(SourceResult(source_name=name, result=r) for r in results)
         finally:
             await plugin.close()
 
     await asyncio.gather(*(run(integration) for integration in sources))
+    return outcome
+
+
+async def releases(
+    session: AsyncSession,
+    registry: DownloadPluginRegistry,
+    target: Target,
+    integration_id: int,
+    hit: SeriesHit,
+) -> SearchOutcome:
+    """Step 2 of a two-stage source, after the user picked a series."""
+    integration = await session.get(DownloadIntegration, integration_id)
+    if integration is None:
+        raise DownloadError("Quelle nicht gefunden")
+    plugin = instantiate(registry, integration)
+    if not isinstance(plugin, TwoStageSearchSource):
+        await plugin.close()
+        raise DownloadError(f"'{integration.name}' hat keine Serienauswahl")
+    query = SearchQuery(titles=target.titles, anidb_id=target.anidb_id, episode=target.episode)
+    outcome = SearchOutcome()
+    try:
+        results = await _guarded(outcome, integration.name, plugin.list_releases(hit, query)) or []
+    finally:
+        await plugin.close()
+    outcome.results.extend(SourceResult(source_name=integration.name, result=r) for r in results)
     return outcome
 
 

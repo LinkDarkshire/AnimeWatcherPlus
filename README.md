@@ -128,7 +128,12 @@ Zwei Arten von Plugin-Klassen (`core/app/downloads/base.py`):
 
 Eigene Plugins: eine `.py`-Datei pro Plugin in den Ordner `plugins` im
 App-Datenverzeichnis legen und die App neu starten. Zwei funktionsfähige,
-kommentierte Vorlagen liegen in `core/plugin_examples/`. Die Einstellungen,
+kommentierte Vorlagen liegen in `core/plugin_examples/`.
+Für Webseiten gibt es `HtmlSiteSource`: Vorlage
+`core/plugin_examples/vorlage_webseite.py` kopieren und nur Adresse und
+CSS-Pfade eintragen (Suche → Serienauswahl → Varianten pro Folge mit
+Sprache/Format/Größe/Hoster). Links über Zwischenseiten (URL-Shortener)
+öffnet die App im Browser; den endgültigen Link fügt man selbst ein. Die Einstellungen,
 die ein Plugin in `settings_schema` deklariert, erscheinen automatisch als
 Formular auf der Download-Seite.
 

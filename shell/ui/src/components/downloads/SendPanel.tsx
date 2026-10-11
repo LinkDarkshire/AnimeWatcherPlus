@@ -1,6 +1,14 @@
 import { useState } from "react"
-import { useDownloadIntegrations, useDownloadSearch, useFolders, useSendDownload } from "@/api/hooks"
-import type { DownloadTarget } from "@/api/types"
+import { openExternal } from "@/api/client"
+import {
+  useDownloadIntegrations,
+  useDownloadReleases,
+  useDownloadSearch,
+  useFolders,
+  useSendDownload,
+} from "@/api/hooks"
+import type { DownloadSearchResult, DownloadTarget } from "@/api/types"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useT } from "@/i18n/I18nContext"
@@ -24,6 +32,7 @@ export function SendPanel({ target }: { target: DownloadTarget }) {
   const { data: integrations } = useDownloadIntegrations()
   const { data: folders } = useFolders()
   const search = useDownloadSearch()
+  const releases = useDownloadReleases()
   const send = useSendDownload()
 
   const clients = integrations?.filter((i) => i.kind === "client" && i.enabled) ?? []
@@ -75,7 +84,15 @@ export function SendPanel({ target }: { target: DownloadTarget }) {
           </label>
         )}
         {hasSources && (
-          <Button size="sm" variant="outline" disabled={search.isPending} onClick={() => search.mutate(target)}>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={search.isPending}
+            onClick={() => {
+              releases.reset()
+              search.mutate(target)
+            }}
+          >
             {search.isPending ? t("downloads.searching") : t("downloads.search")}
           </Button>
         )}
@@ -88,40 +105,59 @@ export function SendPanel({ target }: { target: DownloadTarget }) {
 
       {search.data && (
         <div className="space-y-1">
-          {Object.entries(search.data.errors).map(([source, error]) => (
+          {Object.entries({ ...search.data.errors, ...(releases.data?.errors ?? {}) }).map(([source, error]) => (
             <p key={source} className="text-xs text-red-500">
               {t("downloads.sourceError", { source, error })}
             </p>
           ))}
-          {search.data.results.length === 0 && (
-            <p className="text-xs text-[hsl(var(--muted-foreground))]">{t("downloads.noResults")}</p>
-          )}
-          {search.data.results.map((result, index) => {
-            const meta = [
-              result.source_name,
-              formatSize(result.size_bytes),
-              result.seeders !== null ? t("downloads.seeders", { count: result.seeders }) : null,
-              result.published,
-            ].filter(Boolean)
-            return (
-              <div
-                key={`${result.link}-${index}`}
-                className="flex items-center justify-between gap-2 rounded border bg-[hsl(var(--background))] p-2"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-medium">{result.title}</p>
-                  <p className="truncate text-xs text-[hsl(var(--muted-foreground))]">{meta.join(" · ")}</p>
-                </div>
-                <Button
-                  size="sm"
-                  disabled={selectedClient === undefined || send.isPending}
-                  onClick={() => sendLink(result.link)}
+
+          {/* Two-stage sources with several matching series: pick one first. */}
+          {search.data.series.length > 0 && !releases.data && (
+            <div className="space-y-1">
+              <p className="text-xs">{t("downloads.pickSeries")}</p>
+              {search.data.series.map((series) => (
+                <div
+                  key={`${series.integration_id}-${series.url}`}
+                  className="flex items-center justify-between gap-2 rounded border bg-[hsl(var(--background))] p-2"
                 >
-                  {t("downloads.send")}
-                </Button>
-              </div>
-            )
-          })}
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-medium">{series.title}</p>
+                    <p className="truncate text-xs text-[hsl(var(--muted-foreground))]">
+                      {series.source_name} · {series.url}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={releases.isPending}
+                    onClick={() => releases.mutate({ target, series })}
+                  >
+                    {releases.isPending && releases.variables?.series.url === series.url
+                      ? t("downloads.searching")
+                      : t("downloads.pick")}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+          {releases.data && search.data.series.length > 0 && (
+            <Button size="sm" variant="ghost" onClick={() => releases.reset()}>
+              {t("downloads.otherSeries")}
+            </Button>
+          )}
+
+          {(releases.data ?? search.data).results.length === 0 &&
+            (releases.data || search.data.series.length === 0) && (
+              <p className="text-xs text-[hsl(var(--muted-foreground))]">{t("downloads.noResults")}</p>
+            )}
+          {[...search.data.results, ...(releases.data?.results ?? [])].map((result, index) => (
+            <ResultRow
+              key={`${result.link}-${index}`}
+              result={result}
+              canSend={selectedClient !== undefined && !send.isPending}
+              onSend={() => sendLink(result.link)}
+            />
+          ))}
         </div>
       )}
 
@@ -148,6 +184,54 @@ export function SendPanel({ target }: { target: DownloadTarget }) {
         <p className="text-xs text-emerald-600">{t("downloads.sent", { client: send.data.client_name })}</p>
       )}
       {send.isError && <p className="text-xs text-red-500">{t("downloads.failed", { message: send.error.message })}</p>}
+    </div>
+  )
+}
+
+function ResultRow({
+  result,
+  canSend,
+  onSend,
+}: {
+  result: DownloadSearchResult
+  canSend: boolean
+  onSend: () => void
+}) {
+  const t = useT()
+  const meta = [
+    result.source_name,
+    result.hoster,
+    formatSize(result.size_bytes),
+    result.seeders !== null ? t("downloads.seeders", { count: result.seeders }) : null,
+    result.published,
+    ...Object.entries(result.details).map(([label, value]) => (label ? `${label}: ${value}` : value)),
+  ].filter(Boolean)
+
+  return (
+    <div className="flex items-center justify-between gap-2 rounded border bg-[hsl(var(--background))] p-2">
+      <div className="min-w-0">
+        <p className="flex items-center gap-1.5 truncate text-xs font-medium">
+          {result.title}
+          {result.kind === "stream" && <Badge variant="outline">{t("downloads.stream")}</Badge>}
+        </p>
+        <p className="truncate text-xs text-[hsl(var(--muted-foreground))]">{meta.join(" · ")}</p>
+        {result.needs_browser && result.kind === "download" && (
+          <p className="text-xs text-amber-600 dark:text-amber-400">{t("downloads.browserHint")}</p>
+        )}
+      </div>
+      {result.kind === "stream" ? (
+        <Button size="sm" variant="outline" onClick={() => void openExternal(result.link)}>
+          {t("downloads.open")}
+        </Button>
+      ) : result.needs_browser ? (
+        <Button size="sm" variant="outline" onClick={() => void openExternal(result.link)}>
+          {t("downloads.openInBrowser")}
+        </Button>
+      ) : (
+        <Button size="sm" disabled={!canSend} onClick={onSend}>
+          {t("downloads.send")}
+        </Button>
+      )}
     </div>
   )
 }

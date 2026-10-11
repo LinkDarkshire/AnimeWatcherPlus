@@ -335,10 +335,29 @@ export interface DownloadSearchResult {
   seeders: number | null
   published: string | null
   info_url: string | null
+  /** Hoster/mirror the link points to ("MEGA", ...). */
+  hoster: string | null
+  /** Stream links are only opened in the browser, never sent to a client. */
+  kind: "download" | "stream"
+  /** Label -> value ("Format" -> "MKV"); an empty label means "show the value alone". */
+  details: Record<string, string>
+  /** Leads through an intermediate page (URL shortener, ...): open it in the
+   * browser and paste the final link instead of sending this one. */
+  needs_browser: boolean
+}
+
+/** A series page of a two-stage source, still to be picked by the user. */
+export interface DownloadSeriesHit {
+  integration_id: number
+  source_name: string
+  title: string
+  url: string
+  extra: Record<string, unknown>
 }
 
 export interface DownloadSearchResponse {
   results: DownloadSearchResult[]
+  series: DownloadSeriesHit[]
   /** Source name -> error message, for sources that failed. */
   errors: Record<string, string>
 }

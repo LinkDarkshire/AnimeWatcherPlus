@@ -8,16 +8,22 @@ from app.downloads.base import (
     SearchResult,
     SearchSource,
     SearchSourceError,
+    SeriesHit,
     SettingField,
+    TwoStageSearchSource,
 )
+from app.downloads.html_source import HtmlSiteSource
 
 __all__ = [
     "DownloadClient",
     "DownloadClientError",
+    "HtmlSiteSource",
     "PluginError",
     "SearchQuery",
     "SearchResult",
     "SearchSource",
     "SearchSourceError",
+    "SeriesHit",
     "SettingField",
+    "TwoStageSearchSource",
 ]
