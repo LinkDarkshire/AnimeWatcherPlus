@@ -120,7 +120,8 @@ where the app detects and sorts the files as usual.
 
 Two kinds of plugin classes (`core/app/downloads/base.py`):
 
-- **`DownloadClient`** receives links. Built in: qBittorrent (Web UI API) and
+- **`DownloadClient`** receives links. Built in: qBittorrent (Web UI API),
+  Transmission (RPC, e.g. in a container) and
   JDownloader 2 – via MyJDownloader (recommended, e.g. for JDownloader in a
   Docker container) or via its "Folder Watch" extension.
 - **`SearchSource`** finds links for an episode or a series.

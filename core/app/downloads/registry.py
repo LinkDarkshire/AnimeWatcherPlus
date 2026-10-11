@@ -13,12 +13,18 @@ from app.downloads.base import DownloadClient, SearchSource, _Plugin
 from app.downloads.clients.jdownloader import JDownloaderClient
 from app.downloads.clients.myjdownloader import MyJDownloaderClient
 from app.downloads.clients.qbittorrent import QBittorrentClient
+from app.downloads.clients.transmission import TransmissionClient
 
 logger = structlog.get_logger(__name__)
 
 PluginKind = Literal["client", "source"]
 
-BUILTIN_PLUGINS: list[type[_Plugin]] = [QBittorrentClient, MyJDownloaderClient, JDownloaderClient]
+BUILTIN_PLUGINS: list[type[_Plugin]] = [
+    QBittorrentClient,
+    TransmissionClient,
+    MyJDownloaderClient,
+    JDownloaderClient,
+]
 
 PLUGINS_README = """AnimeWatcherPlus -- eigene Download-Plugins
 ==========================================

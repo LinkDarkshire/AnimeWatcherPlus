@@ -120,7 +120,8 @@ Dateien wie gewohnt.
 
 Zwei Arten von Plugin-Klassen (`core/app/downloads/base.py`):
 
-- **`DownloadClient`** nimmt Links entgegen. Eingebaut: qBittorrent (Web-UI-API)
+- **`DownloadClient`** nimmt Links entgegen. Eingebaut: qBittorrent (Web-UI-API),
+  Transmission (RPC, z. B. im Container)
   und JDownloader 2 – entweder über MyJDownloader (empfohlen, z. B. für
   JDownloader im Docker-Container) oder über die Erweiterung „Folder Watch“.
 - **`SearchSource`** findet Links zu einer Folge oder Serie.
