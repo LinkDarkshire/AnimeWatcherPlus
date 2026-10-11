@@ -68,11 +68,19 @@ class HtmlSiteSource(TwoStageSearchSource):
     EPISODE_NUMBER_PATTERN: ClassVar[str] = r"(\d+)"
     EPISODE_BODY: ClassVar[str | None] = None
     VARIANT_HEADER: ClassVar[str | None] = None
+    # Optional: which parts of the header make up the variant's name
+    # (relative to VARIANT_HEADER). Every match counts, joined with " · " --
+    # e.g. "span.label, span.badge" gives "Raw · Censored". None: the
+    # header's whole text, icons included.
+    VARIANT_NAME: ClassVar[str | None] = None
     DETAIL_ITEM: ClassVar[str | None] = None
     # Optional: label/value inside one DETAIL_ITEM. Without them the item's
     # text is split at DETAIL_SEPARATOR ("Format: MKV"), or shown as a whole.
+    # DETAIL_VALUE may also be a tuple of selectors, tried in order until one
+    # yields text -- for values that are sometimes wrapped and sometimes not:
+    # ("div.value span:last-child", "div.value").
     DETAIL_LABEL: ClassVar[str | None] = None
-    DETAIL_VALUE: ClassVar[str | None] = None
+    DETAIL_VALUE: ClassVar[str | tuple[str, ...] | None] = None
     DETAIL_SEPARATOR: ClassVar[str] = ":"
     DOWNLOAD_LINK: ClassVar[str | None] = None
     STREAM_LINK: ClassVar[str | None] = None
@@ -180,12 +188,25 @@ class HtmlSiteSource(TwoStageSearchSource):
         for child in body.find_all(recursive=False):
             header = child if child.css.match(self.VARIANT_HEADER) else child.select_one(self.VARIANT_HEADER)
             if header is not None:
-                groups.append((_text(header), [child]))
+                groups.append((self._variant_name(header), [child]))
             elif groups:
                 groups[-1][1].append(child)
             else:  # content before the first header
                 groups.append(("", [child]))
         return groups
+
+    def _variant_name(self, header: Tag) -> str:
+        if not self.VARIANT_NAME:
+            return _text(header)
+        parts = [_text(part) for part in header.select(self.VARIANT_NAME)]
+        return " · ".join(part for part in parts if part) or _text(header)
+
+    def _first_text(self, element: Tag, selectors: str | tuple[str, ...]) -> str:
+        for selector in (selectors,) if isinstance(selectors, str) else selectors:
+            text = _text(element.select_one(selector))
+            if text:
+                return text
+        return ""
 
     def _select_all(self, elements: list[Tag], selector: str | None) -> list[Tag]:
         if not selector:
@@ -201,7 +222,7 @@ class HtmlSiteSource(TwoStageSearchSource):
         details: dict[str, str] = {}
         for item in self._select_all(elements, self.DETAIL_ITEM):
             if self.DETAIL_LABEL and self.DETAIL_VALUE:
-                label, value = _text(item.select_one(self.DETAIL_LABEL)), _text(item.select_one(self.DETAIL_VALUE))
+                label, value = _text(item.select_one(self.DETAIL_LABEL)), self._first_text(item, self.DETAIL_VALUE)
             else:
                 label, _, value = _text(item).partition(self.DETAIL_SEPARATOR)
                 if not value:  # no separator: show the text as it is

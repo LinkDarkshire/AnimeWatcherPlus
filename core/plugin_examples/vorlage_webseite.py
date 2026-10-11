@@ -95,16 +95,29 @@ class MeineSeite(HtmlSiteSource):
     # nacheinander stehen (wie im Beispiel oben) -- beides funktioniert.
     # None = jede Folge hat nur eine Variante.
     VARIANT_HEADER = "div.variant-header"
+    # Optional: welche Teile der Kopfzeile den Namen bilden (relativ zu
+    # VARIANT_HEADER). Alle Treffer zählen und werden mit " · " verbunden:
+    # "span.label, span.badge" ergibt z. B. "Raw · Censored". So bleiben
+    # Symbole/Icons aus dem Namen heraus. None = der ganze Text der Kopfzeile.
+    VARIANT_NAME = None
     # Optional: Detail-Angaben einer Variante (Format, Größe, Untertitel, Audio).
     DETAIL_ITEM = "span.meta-item"
     # Wie ein Detail in Bezeichnung und Wert geteilt wird ("Format: MKV").
     # Steht beides in eigenen Elementen, stattdessen DETAIL_LABEL und
-    # DETAIL_VALUE als Pfade (relativ zu DETAIL_ITEM) setzen.
+    # DETAIL_VALUE als Pfade (relativ zu DETAIL_ITEM) setzen. DETAIL_VALUE
+    # darf auch ein Tupel sein, das der Reihe nach probiert wird -- für Werte,
+    # die mal in einem <span> stehen (oft mit Flagge/Symbol davor) und mal
+    # direkt im Element:
+    #     DETAIL_VALUE = ("div.wert span:last-child", "div.wert")
     DETAIL_SEPARATOR = ":"
     DETAIL_LABEL = None
     DETAIL_VALUE = None
     # Download-Links (das <a>-Element). Der Text des Links wird als Hoster
     # angezeigt ("MEGA"); mehrere Links pro Variante sind normal.
+    # Unterscheiden sich Download- und Stream-Bereich nur durch ihre
+    # Beschriftung, hilft :-soup-contains("Text") (funktioniert in der App,
+    # nicht in der Browser-Konsole):
+    #     'div.aktion:has(> div.beschriftung:-soup-contains("Download")) a'
     DOWNLOAD_LINK = "div.variant-actions a.download"
     # Optional: Stream-Links. Werden nur angezeigt (im Browser öffnen),
     # nie an einen Download-Client geschickt. None = nicht anzeigen.

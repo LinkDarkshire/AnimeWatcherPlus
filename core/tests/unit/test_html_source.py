@@ -134,3 +134,58 @@ async def test_unconfigured_and_blocked_sites_report_clearly() -> None:
     respx.get(f"{BASE}/?s=x").mock(return_value=httpx.Response(403, text="Attention Required | Cloudflare"))
     with pytest.raises(SearchSourceError, match="Cloudflare"):
         await _template_class()({}).search_series(SearchQuery(titles=["x"]))
+
+
+MIXED_PAGE = """
+<div class="episode"><div class="h">Episode 01</div><div class="body">
+  <div class="v-header">
+    <span class="v-type"><span class="v-icon">📼</span><span class="v-label">Raw</span></span>
+    <span class="v-badge">Censored</span>
+  </div>
+  <div class="v-meta">
+    <div class="m-item"><div class="m-label">Format</div><div class="m-value">MP4</div></div>
+    <div class="m-item"><div class="m-label">Size</div><div class="m-value"> 103 MB </div></div>
+    <div class="m-item"><div class="m-label">Subs</div><div class="m-value"><span>⌀</span><span>None</span></div></div>
+    <div class="m-item"><div class="m-label">Audio</div><div class="m-value"><span>🇯🇵</span><span>Japanese</span></div></div>
+  </div>
+  <div class="v-actions">
+    <div class="a-item"><div class="a-label">Download</div>
+      <div class="a-wrap"><a class="a-value" href="/out/?sv=a&amp;id=1">HostA</a><a class="a-value" href="/out/?sv=b&amp;id=1">Torrent</a></div>
+    </div>
+    <div class="a-item"><div class="a-label">Stream</div>
+      <div class="a-wrap"><a class="a-value" href="/watch/1">Player</a></div>
+    </div>
+  </div>
+</div></div>
+"""
+
+
+def test_mixed_values_variant_name_and_label_based_link_sections() -> None:
+    from bs4 import BeautifulSoup
+
+    from app.downloads import HtmlSiteSource
+
+    class Mixed(HtmlSiteSource):
+        id = "mixed"
+        name = "Mixed"
+        EPISODE_ITEM = "div.episode"
+        EPISODE_LABEL = "div.h"
+        EPISODE_BODY = "div.body"
+        VARIANT_HEADER = "div.v-header"
+        VARIANT_NAME = "span.v-label, span.v-badge"
+        DETAIL_ITEM = "div.m-item"
+        DETAIL_LABEL = "div.m-label"
+        DETAIL_VALUE = ("div.m-value span:last-child", "div.m-value")
+        DOWNLOAD_LINK = 'div.a-item:has(> div.a-label:-soup-contains("Download")) a.a-value'
+        STREAM_LINK = 'div.a-item:has(> div.a-label:-soup-contains("Stream")) a.a-value'
+        BROWSER_LINK_PATTERN = r"/out/"
+
+    releases = Mixed({}).parse_releases(BeautifulSoup(MIXED_PAGE, "html.parser"), "https://site.example/show/", 1)
+
+    assert [(r.title, r.hoster, r.kind, r.needs_browser) for r in releases] == [
+        ("Episode 01 · Raw · Censored", "HostA", "download", True),
+        ("Episode 01 · Raw · Censored", "Torrent", "download", True),
+        ("Episode 01 · Raw · Censored", "Player", "stream", False),
+    ]
+    assert releases[0].link == "https://site.example/out/?sv=a&id=1"
+    assert releases[0].details == {"Format": "MP4", "Size": "103 MB", "Subs": "None", "Audio": "Japanese"}
