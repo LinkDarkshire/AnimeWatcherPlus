@@ -6,6 +6,7 @@
 #   ./dev_start.sh --browser  Core + UI only, opened in the browser
 #                             (no Tauri build; "open folder" is unavailable)
 #   ./dev_start.sh --setup    Only set up and compile, don't start anything
+#   ./dev_start.sh --deps     Only install dependencies (used by build_linux.sh)
 #
 # Everything runs inside a Distrobox container ("awp-dev", Fedora 44). Tauri
 # needs WebKitGTK/GTK development packages, which immutable systems such as
@@ -70,6 +71,10 @@ UI="$ROOT/shell/ui"
 if [[ ! -d "$UI/node_modules" || "$UI/package-lock.json" -nt "$UI/node_modules/.package-lock.json" ]]; then
     log "Installiere Frontend-Abhängigkeiten ..."
     npm --prefix "$UI" ci
+fi
+
+if [[ "$MODE" == "--deps" ]]; then
+    exit 0
 fi
 
 # --- Browser mode: core on :8000 + Vite on :5173, no Tauri --------------------

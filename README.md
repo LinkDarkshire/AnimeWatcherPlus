@@ -54,7 +54,8 @@ Downloads einheitlich und übergibt neue Folgen an deinen Download-Client.
 - **Logging:** rotierende JSON-Logdatei (`logs/core.log`, 10 MB × 5 Dateien)
   zum Beilegen bei Problemen.
 - **Installer & Auto-Update:** signierter NSIS-Installer; die App prüft beim
-  Start auf neue Versionen in den GitHub Releases.
+  Start auf neue Versionen in den GitHub Releases. Unter Linux als AppImage,
+  das ohne Installation läuft.
 
 ## Neu in 0.2.0
 
@@ -67,7 +68,8 @@ Downloads einheitlich und übergibt neue Folgen an deinen Download-Client.
   keine Dateien mehr, die nicht verschoben wurden
 - „Leerer Ordner“-Abfrage nur noch für wirklich leere Ordner
 - Fehlgeschlagene Aktionen werden als Meldung angezeigt
-- Linux-Startskript (`dev_start.sh`)
+- Linux: AppImage (`build_linux.sh`) und Startskript (`dev_start.sh`)
+- Releases für Windows und Linux werden automatisch auf GitHub gebaut
 - Zahlreiche Fehlerbehebungen (Titelsuche, Offline-Ordner, Speicherlecks,
   Sicherheit der Desktop-Shell)
 
@@ -180,65 +182,84 @@ auf der Download-Seite. Kommentierte Vorlagen in `core/plugin_examples/`:
 In der installierten Windows-Version können Plugins nur Bibliotheken nutzen,
 die in der App enthalten sind (u. a. `httpx` und `beautifulsoup4`).
 
-## Installer bauen (Release)
+## Linux: AppImage
 
-Einmalig: Updater-Signierschlüssel erzeugen (bleibt außerhalb des Repos, wird
-nie committet):
+Ein AppImage ist eine einzelne Datei, die ohne Installation auf praktisch
+jeder Distribution läuft – auch auf unveränderlichen Systemen wie Bazzite:
+
+```bash
+chmod +x AnimeWatcherPlus_*.AppImage
+./AnimeWatcherPlus_*.AppImage
+```
+
+Meldet das System, dass FUSE fehlt, startet es auch so:
+`./AnimeWatcherPlus_*.AppImage --appimage-extract-and-run`.
+
+Selbst bauen (im selben Distrobox-Container wie `dev_start.sh`):
+
+```bash
+./build_linux.sh
+```
+
+Ergebnis unter `shell/src-tauri/target/release/bundle/appimage/`. Ein lokal
+gebautes AppImage läuft auf Systemen, die mindestens so neu sind wie der
+Container (Fedora 44); das AppImage aus den GitHub Releases wird auf Ubuntu
+22.04 gebaut und läuft auch auf älteren Systemen.
+
+## Release erstellen
+
+Releases baut GitHub automatisch (`.github/workflows/release.yml`): den
+Windows-Installer und das Linux-AppImage, beide signiert für den
+Auto-Updater, zusammen mit der `latest.json`.
+
+Einmalig: den Updater-Signierschlüssel erzeugen (bleibt außerhalb des Repos)
+und seinen **Inhalt** auf GitHub unter *Settings → Secrets and variables →
+Actions* als `TAURI_SIGNING_PRIVATE_KEY` hinterlegen (hat der Schlüssel ein
+Passwort, zusätzlich `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`):
 
 ```bash
 cargo tauri signer generate -w "%USERPROFILE%\.awp-secrets\awp-updater.key" --ci
 ```
 
-Danach für jeden Release die folgenden drei Schritte. Core, Frontend und Shell
-sind unabhängig — hat sich z. B. nur das Backend geändert, reicht es, Schritt 1
-erneut auszuführen, bevor Schritt 3 alles zu einem neuen Installer packt.
+Der öffentliche Schlüssel steht in `tauri.conf.json` (`plugins.updater.pubkey`)
+und muss dazu passen.
 
-**1. Python-Core mit PyInstaller zu einer einzelnen Exe bauen** (eine Datei,
-weil die Datenbank-Migrationen zur Laufzeit als echte Dateien gebraucht
-werden):
+Für jeden Release:
+
+1. Version in `tauri.conf.json`, `Cargo.toml`, `core/pyproject.toml`,
+   `core/app/main.py` und `shell/ui/package.json` anheben.
+2. Auf `main` einen Tag setzen und pushen:
+   ```bash
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+3. Der Workflow legt einen **Entwurf** unter *Releases* an. Prüfen und
+   veröffentlichen – erst dann bieten installierte Apps das Update an.
+
+### Windows-Installer von Hand bauen
+
+Falls nötig, geht es auch lokal unter Windows:
 
 ```bash
 cd core
+.venv\Scripts\python.exe -m pip install -e ".[build]"
 .venv\Scripts\python.exe -m PyInstaller core.spec --distpath ..\shell\src-tauri\binaries --noconfirm
 move /y ..\shell\src-tauri\binaries\core.exe ..\shell\src-tauri\binaries\core-x86_64-pc-windows-msvc.exe
-```
-
-`shell/src-tauri/binaries/` wird nie committet (siehe `.gitignore`).
-
-**2. Frontend bauen:**
-
-```bash
-cd shell/ui
+cd ..\shell\ui
 npm run build
-```
-
-**3. Signierten NSIS-Installer bauen:**
-
-```bash
-cd shell
+cd ..
 set TAURI_SIGNING_PRIVATE_KEY=%USERPROFILE%\.awp-secrets\awp-updater.key
 set CI=true
 cargo tauri build
 ```
 
 `CI=true` ist nötig, weil `cargo tauri build` beim Signieren sonst interaktiv
-nach einem Passwort fragt und in einer nicht-interaktiven Shell hängen bleibt
-(auch bei einem Schlüssel ohne Passwort).
-
-Ergebnis unter `shell/src-tauri/target/release/bundle/nsis/`: der
-`.exe`-Installer und die zugehörige `.exe.sig`-Signatur.
-
-Release auf GitHub: den Installer, die `.exe.sig` und eine `latest.json`
-(Version, Notes, `pub_date`, `platforms.windows-x86_64.signature`/`.url`) als
-Release-Assets unter `github.com/LinkDarkshire/AnimeWatcherPlus/releases/new`
-hochladen. Die installierte App prüft `releases/latest/download/latest.json`
-beim Start und bietet das Update per Klick an. Die Version muss in
-`tauri.conf.json`, `Cargo.toml`, `core/pyproject.toml`, `core/app/main.py` und
-`shell/ui/package.json` übereinstimmen.
+nach einem Passwort fragt und hängen bleibt (auch bei einem Schlüssel ohne
+Passwort). Ergebnis unter `shell/src-tauri/target/release/bundle/nsis/`.
+`shell/src-tauri/binaries/` wird nie committet.
 
 ## Bekannte Einschränkungen
 
-- Der Installer wird nur lokal gebaut; die CI prüft Lint, Typen und Tests.
 - Kein Code-Signing-Zertifikat (Authenticode): Windows SmartScreen warnt bei
   der Erstinstallation und bei Updates. Das lässt sich nur mit einem
   kostenpflichtigen Zertifikat vermeiden.
