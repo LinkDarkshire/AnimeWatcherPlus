@@ -954,3 +954,10 @@ async def test_anidb_status_reports_block_and_waiting_work(db_session, tmp_path)
     assert body["blocked_until"] == pytest.approx(provider.banned_until)
     assert body["waiting_anime"] == 1
     assert body["state"] == "idle"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size,ok", [(25, True), (50, True), (100, True), (30, False), (True, False), ("50", False)])
+async def test_library_page_size_setting(client, size, ok) -> None:
+    response = await client.put("/api/v1/settings", json={"values": {"library_page_size": size}})
+    assert (response.status_code == 200) is ok

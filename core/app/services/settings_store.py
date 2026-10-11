@@ -31,6 +31,10 @@ DEFAULT_RENAME_MODE = "ask"
 # Two independent preference orders over app.domain.titles.TITLE_VARIANTS:
 # one deciding the name shown in the library overview, one deciding the
 # on-disk directory/file names.
+# Anime per page in the library grid (25 | 50 | 100).
+LIBRARY_PAGE_SIZE = "library_page_size"
+LIBRARY_PAGE_SIZES = (25, 50, 100)
+
 DISPLAY_TITLE_ORDER = "display_title_order"
 FOLDER_TITLE_ORDER = "folder_title_order"
 

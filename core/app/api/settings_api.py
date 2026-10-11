@@ -15,6 +15,8 @@ from app.services import pending_actions
 from app.services.settings_store import (
     DISPLAY_TITLE_ORDER,
     FOLDER_TITLE_ORDER,
+    LIBRARY_PAGE_SIZE,
+    LIBRARY_PAGE_SIZES,
     RENAME_MODE,
     SORT_MODE,
     STALENESS_RULE_ENABLED,
@@ -58,6 +60,7 @@ _WRITABLE: dict[str, Callable[[Any], bool]] = {
     # Normalized below, so any list is accepted.
     DISPLAY_TITLE_ORDER: lambda value: isinstance(value, list),
     FOLDER_TITLE_ORDER: lambda value: isinstance(value, list),
+    LIBRARY_PAGE_SIZE: lambda value: value in LIBRARY_PAGE_SIZES and not isinstance(value, bool),
 }
 
 

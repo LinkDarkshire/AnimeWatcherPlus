@@ -18,6 +18,10 @@ const DEFAULT_SORT_MODE = "ask"
 const RENAME_MODE_KEY = "rename_mode"
 const DEFAULT_RENAME_MODE = "ask"
 
+const LIBRARY_PAGE_SIZE_KEY = "library_page_size"
+const LIBRARY_PAGE_SIZES = [25, 50, 100]
+const DEFAULT_LIBRARY_PAGE_SIZE = 50
+
 const DISPLAY_TITLE_ORDER_KEY = "display_title_order"
 const FOLDER_TITLE_ORDER_KEY = "folder_title_order"
 
@@ -63,6 +67,12 @@ export function Settings() {
     updateSettings.mutate({ [SORT_MODE_KEY]: value })
   }
 
+  const storedPageSize = settings?.values[LIBRARY_PAGE_SIZE_KEY]
+  const libraryPageSize =
+    typeof storedPageSize === "number" && LIBRARY_PAGE_SIZES.includes(storedPageSize)
+      ? storedPageSize
+      : DEFAULT_LIBRARY_PAGE_SIZE
+
   const handleSaveRenameMode = (value: string) => {
     setRenameMode(value)
     updateSettings.mutate({ [RENAME_MODE_KEY]: value })
@@ -104,6 +114,27 @@ export function Settings() {
               </option>
             ))}
           </select>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="space-y-3 p-4">
+          <p className="text-sm font-medium">{t("settings.libraryPageSizeTitle")}</p>
+          <p className="text-xs text-[hsl(var(--muted-foreground))]">{t("settings.libraryPageSizeDescription")}</p>
+          <label className="flex items-center gap-2 text-sm">
+            {t("settings.libraryPageSizeLabel")}
+            <select
+              value={libraryPageSize}
+              onChange={(e) => updateSettings.mutate({ [LIBRARY_PAGE_SIZE_KEY]: Number(e.target.value) })}
+              className="h-9 rounded-md border border-[hsl(var(--border))] bg-transparent px-2 text-sm"
+            >
+              {LIBRARY_PAGE_SIZES.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+          </label>
         </CardContent>
       </Card>
 

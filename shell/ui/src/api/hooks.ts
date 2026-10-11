@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { api } from "./client"
 import { toQueryString, type AnimeFilters } from "@/lib/animeFilters"
 import type {
@@ -33,26 +33,13 @@ import type {
 
 export type { AnimeFilters }
 
-/** One page of anime per fetch, appended as the grid scrolls (FA: the library
- * can hold thousands of entries -- a single request for all of them would
- * transfer the whole catalog on every filter change and still only render a
- * virtualized window of it).
- *
- * Loaded pages stay in the query cache under the same key, which is also what
- * makes the Library's scroll restoration work after visiting an anime: coming
- * back re-renders the full set of pages the user had scrolled through, not
- * just the first one.
- */
-export function useAnimesInfinite(filters: Omit<AnimeFilters, "page">) {
-  return useInfiniteQuery({
-    queryKey: ["animes", "infinite", filters],
-    initialPageParam: 1,
-    queryFn: ({ pageParam }) =>
-      api.get<AnimeListResponse>(`/api/v1/animes?${toQueryString({ ...filters, page: pageParam })}`),
-    getNextPageParam: (lastPage, allPages) => {
-      const loaded = allPages.reduce((sum, page) => sum + page.items.length, 0)
-      return loaded < lastPage.total ? allPages.length + 1 : undefined
-    },
+/** One page of the library. The previous page stays on screen while the
+ * next one loads, so paging doesn't flash an empty grid. */
+export function useAnimesPage(filters: AnimeFilters) {
+  return useQuery({
+    queryKey: ["animes", "page", filters],
+    queryFn: () => api.get<AnimeListResponse>(`/api/v1/animes?${toQueryString(filters)}`),
+    placeholderData: (previous) => previous,
   })
 }
 
