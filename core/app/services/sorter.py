@@ -170,12 +170,11 @@ def _dedupe_path(src: Path, dest: Path) -> Path:
 
 
 def move_file(src: Path, dest: Path) -> Path:
-    """NFA-09: loss-safe move. Same-volume is an atomic rename; a cross-
-    device destination can't rename() so it falls back to copy + size-verify
-    + only-then-delete-source, so an interrupted or failed copy never costs
-    the original file. Never overwrites a *different* existing file at dest --
-    a real collision gets a " (2)", " (3)", ... suffix instead, while a
-    case-only rename of the file itself goes through as the rename it is.
+    """Moves a file without risking it. On the same drive that's a plain
+    rename; across drives it copies, checks the size, and only then deletes
+    the original, so a failed copy never loses the file. An existing,
+    different file at the destination is never overwritten -- the new one
+    gets a " (2)", " (3)", ... suffix instead.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest = _dedupe_path(src, dest)
@@ -206,7 +205,7 @@ def move_file(src: Path, dest: Path) -> Path:
 
 def move_episode_file(src: Path, dest: Path) -> Path:
     """Moves an episode file together with every file named after it: the
-    per-episode NFO written next to it (FA-09), external subtitles
+    per-episode NFO written next to it, external subtitles
     (`.ass`, `.en.srt`), separate audio tracks (`.mka`) and the like. Without
     this a rename strands `Old Name.nfo`/`Old Name.ass` beside
     `New Name.mkv` -- Jellyfin/Kodi read the NFO as a separate episode and
@@ -261,9 +260,8 @@ def _move_remaining_files(source_dir: Path, new_dir: Path) -> None:
 
 
 def _cleanup_source_dir(source_dir: Path) -> None:
-    """Removes the emptied source directory -- but only if it really is
-    empty. It used to be rmtree'd as soon as no *video* was left in it, which
-    deleted subtitles and other files that were never moved anywhere."""
+    """Removes the source directory once it's empty. Anything still in it
+    (files that weren't moved) keeps it in place."""
     try:
         if not remove_dir_if_empty(source_dir):
             logger.warning("source_dir_kept_not_empty", path=str(source_dir))
@@ -433,7 +431,8 @@ async def _suggested_target_folders(session: AsyncSession, anidb_ids: set[int]) 
     )
     suggestions: dict[int, int] = {}
     for anidb_id, folder_id in result.all():
-        suggestions.setdefault(anidb_id, folder_id)
+        if anidb_id is not None:
+            suggestions.setdefault(anidb_id, folder_id)
     return suggestions
 
 
@@ -680,7 +679,7 @@ async def rename_anime(session: AsyncSession, event_bus: EventBus, anime_id: int
         # script -- renaming a correctly romanized folder to that is exactly
         # the damage this refuses to do.
         raise RenameConflict(
-            "Titel-Varianten unbekannt – bitte zuerst die Metadaten aktualisieren"
+            "Titel-Varianten unbekannt - bitte zuerst die Metadaten aktualisieren"
         )
 
     local_episodes = await episode_repo.by_anime(anime.id)

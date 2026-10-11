@@ -12,9 +12,8 @@ import type { RenameProposal, SortProposal } from "@/api/types"
  * can have dozens, and the card shouldn't push everything else off-screen. */
 const COLLAPSED_FILE_COUNT = 5
 
-/** The rename/sort requests from the Abfragen page that concern this one
- * series, resolvable right here. Identification and duplicates already have
- * their own place on the series page. */
+/** The open rename/sort proposals for this series, resolvable right here.
+ * Identification and duplicates have their own place on the series page. */
 export function AnimePendingActionsSection({ animeId }: { animeId: number }) {
   const t = useT()
   const { data } = useAnimePendingActions(animeId)

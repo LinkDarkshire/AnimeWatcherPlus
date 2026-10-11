@@ -44,11 +44,12 @@ async def _identify_anime(
     provider_registry: ProviderRegistry,
     event_bus: EventBus,
 ) -> Anime:
-    """Orchestrates: NFO -> local titledump fuzzy match -> provider chain -> NFO write.
+    """Works out which anime a directory holds and fetches its metadata.
 
-    Mirrors the Kap. 4.4 sequence diagram. Ambiguous fuzzy matches go to `review`
-    instead of a silent auto-assignment (Edge Case 4 / FA-26); no match at all goes
-    to `needs_manual_id` (FA-07).
+    The AniDB id comes from an existing tvshow.nfo if there is one, otherwise
+    from matching the folder name against the local title list. A clear match
+    is used directly; close candidates go to the review queue instead of
+    being guessed, and no match at all marks the anime for manual ID entry.
     """
     anime_repo = AnimeRepo(session)
     job_log = JobLogRepo(session)
@@ -117,7 +118,7 @@ async def _manual_identify(
     provider_registry: ProviderRegistry,
     event_bus: EventBus,
 ) -> Anime:
-    """FA-07: user-supplied AniDB ID, bypassing the fuzzy-match step entirely."""
+    """Identifies an anime with an AniDB id the user entered (no title matching)."""
     anime_repo = AnimeRepo(session)
     job_log = JobLogRepo(session)
 
@@ -285,13 +286,8 @@ async def _finalize_identification(
             anime.no_scan = fresh_anime.no_scan
 
     if id_changed and anime.poster_path:
-        # The old poster belongs to the *previous* identity -- clear it
-        # unconditionally, before even attempting the new fetch below. This
-        # must not be nested inside the fetch-dependent logic in
-        # _write_artwork_and_aniinfo: if the new ID's get_full_info() call
-        # fails, returns no poster_url, or the redownload itself fails, the
-        # stale file+DB pointer would otherwise silently survive the ID
-        # change (the actual bug this fixes).
+        # The poster shows the previous anime. Remove it before fetching the
+        # new one, so it doesn't stay if that fetch fails.
         (anime_dir / artwork.POSTER_FILENAME).unlink(missing_ok=True)
         await anime_repo.set_poster_path(anime_id, None)
         anime.poster_path = None
@@ -353,12 +349,10 @@ async def _finalize_identification(
 
 
 async def _write_episode_nfos(session: AsyncSession, anime_id: int, anidb_id: int) -> int:
-    """FA-09: one Jellyfin/Kodi `episodedetails` NFO per matched episode file.
+    """Writes a Jellyfin/Kodi episode NFO next to every matched episode file.
 
-    Best-effort like the poster/aniinfo sidecars -- a read-only share or a
-    single unwritable file must never fail the identification that produced
-    the metadata. Unmatched files are skipped: without a confirmed episode
-    number there is nothing truthful to write.
+    Best effort: a read-only share or one unwritable file never fails the
+    identification. Files without a matched episode number are skipped.
     """
     anime = await AnimeRepo(session).get(anime_id)
     if anime is None:
@@ -395,10 +389,9 @@ async def _write_artwork_and_aniinfo(
     anidb_id: int,
     match_score: float | None,
 ) -> bool:
-    """Best-effort: a failure here must never break identification itself
-    (NFA-12-style isolation), so every error is caught and logged.
-    Returns True if a poster was (already, or newly) saved locally.
-    """
+    """Saves the poster and aniinfo.json. Best effort: errors are logged, never
+    raised, so identification itself can't fail here. Returns True if a
+    poster is saved locally (already or now)."""
     if provider_name is None:
         return False
     provider = provider_registry.get_provider(provider_name)
@@ -417,14 +410,9 @@ async def _write_artwork_and_aniinfo(
     episode_repo = LocalEpisodeRepo(session)
     local_count = len(await episode_repo.by_anime(anime.id))
 
-    # Checking the DB field alone isn't enough: a directory reorganized
-    # outside the app (moved/renamed by hand, or by an external tool, before
-    # or between AnimeWatcherPlus runs) can leave poster_path pointing at a
-    # file that no longer exists at the anime's current directory -- and
-    # since that's indistinguishable from "already saved" if only the DB
-    # column is checked, no rescan would ever notice or re-download it.
-    # Verifying the file's actual presence makes this self-healing on the
-    # very next identify/rescan, regardless of why it went missing.
+    # Check the file itself, not just the DB field: if the folder was
+    # reorganized outside the app, the poster may be gone, and this way the
+    # next refresh downloads it again.
     poster_path = anime.poster_path
     poster_saved = poster_path is not None and (anime_dir / poster_path).is_file()
     poster_url = full_info.get("poster_url")

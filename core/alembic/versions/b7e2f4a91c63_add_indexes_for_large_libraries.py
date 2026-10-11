@@ -43,12 +43,9 @@ _INDEXES = [
 def upgrade() -> None:
     """Upgrade schema.
 
-    Skips tables that aren't present. A healthy DB reaching this revision has
-    all of them (they come from the initial schema), but this chain is also
-    entered from hand-repaired/partial SQLite files -- see 280262530db1, which
-    exists because a real library.db was found with its recorded revision out
-    of step with its actual schema. A purely additive index migration must not
-    be what finally hard-fails such a DB.
+    Skips tables that don't exist. A normal database has all of them, but a
+    hand-repaired one may not (see 280262530db1), and adding indexes is no
+    reason to fail the upgrade.
     """
     existing = set(sa.inspect(op.get_bind()).get_table_names())
     for name, table_name, column_name in _INDEXES:

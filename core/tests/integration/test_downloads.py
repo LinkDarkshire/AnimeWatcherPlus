@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import shutil
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import MagicMock
 
 import httpx
@@ -53,7 +54,7 @@ def test_registry_loads_example_plugins_and_reports_broken_files(tmp_path) -> No
 
     registry = build_registry(plugins)
 
-    assert {"qbittorrent", "jdownloader", "beispiel_linkliste", "beispiel_linkdatei"} <= set(registry.classes)
+    assert {"qbittorrent", "jdownloader", "example_link_list", "example_link_file"} <= set(registry.classes)
     assert registry.builtin_ids == {"qbittorrent", "transmission", "jdownloader", "myjdownloader"}
     assert {e.file for e in registry.load_errors} == {"kaputt.py", "leer.py"}
     assert (plugins / "LIESMICH.txt").exists()
@@ -356,7 +357,7 @@ async def test_two_stage_source_offers_series_then_lists_releases(client, db_ses
 class _ProgressClient(DownloadClient):
     id = "progress_client"
     name = "Progress"
-    statuses: dict = {}
+    statuses: ClassVar[dict] = {}
 
     def accepts(self, link: str) -> bool:
         return True

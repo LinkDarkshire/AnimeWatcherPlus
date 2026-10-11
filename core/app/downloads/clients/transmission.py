@@ -87,7 +87,9 @@ class TransmissionClient(DownloadClient):
         for _ in range(2):
             headers = {_SESSION_HEADER: self._session_id} if self._session_id else {}
             try:
-                response = await self._http.post(self._url, json=payload, headers=headers, auth=self._auth)
+                response = await self._http.post(
+                    self._url, json=payload, headers=headers, auth=self._auth or httpx.USE_CLIENT_DEFAULT
+                )
             except httpx.HTTPError as exc:
                 raise DownloadClientError(f"Transmission nicht erreichbar ({self._url}): {exc}") from exc
             if response.status_code == 409 and _SESSION_HEADER in response.headers:

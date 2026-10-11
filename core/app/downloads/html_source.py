@@ -1,7 +1,7 @@
 """A ready-made two-stage search source for websites, configured purely by
 CSS selectors. A plugin subclasses HtmlSiteSource and fills in the class
 attributes below -- no parsing code needed. See
-core/plugin_examples/vorlage_webseite.py for an annotated template.
+core/plugin_examples/website_template.py for an annotated template.
 
 How a page is read (all selectors are CSS selectors, as in the browser's
 developer tools -- right click an element -> Copy -> Copy selector):

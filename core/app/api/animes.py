@@ -41,7 +41,7 @@ class TagOut(BaseModel):
 
 
 class CompletenessOut(BaseModel):
-    """FA-10: "vollständig / n fehlend" on the library card."""
+    """Episode counts behind the "complete / n missing" badge on a library card."""
 
     expected: int
     present: int
@@ -192,8 +192,8 @@ async def get_anime(anime_id: int, session: AsyncSession = Depends(get_db)) -> A
 
 @router.delete("/animes/{anime_id}", status_code=204)
 async def delete_anime(anime_id: int, session: AsyncSession = Depends(get_db)) -> None:
-    """Removes one catalog entry -- used to resolve a confirmed duplicate
-    (same anime cataloged from two folders). Does not touch files on disk."""
+    """Removes one catalog entry, e.g. to resolve a confirmed duplicate (the
+    same anime cataloged from two folders). Files on disk are left alone."""
     repo = AnimeRepo(session)
     anime = await repo.get(anime_id)
     if anime is None:
@@ -229,9 +229,9 @@ class MissingEpisodesResponse(BaseModel):
 async def get_missing_episodes(
     anime_id: int, session: AsyncSession = Depends(get_db)
 ) -> MissingEpisodesResponse:
-    """FA-12, per series: which episodes of the provider's list have no file
-    on disk. Specials/credits/trailers are excluded -- see
-    db.completeness._is_plain_number."""
+    """Which episodes of the provider's list have no file on disk for this
+    series. Specials, credits and trailers are left out (see
+    db.completeness._is_plain_number)."""
     if await AnimeRepo(session).get(anime_id) is None:
         raise HTTPException(status_code=404, detail="Anime nicht gefunden")
     repo = CompletenessRepo(session)
@@ -269,8 +269,8 @@ class MissingEpisodesOverview(BaseModel):
 async def list_missing_episodes(
     page: int = PAGE, size: int = PAGE_SIZE, session: AsyncSession = Depends(get_db)
 ) -> MissingEpisodesOverview:
-    """FA-12, global view. Paginated like the library -- on a large catalog
-    this list can itself run into the hundreds."""
+    """Every series with missing episodes, paginated like the library since
+    on a large catalog this list alone can run into the hundreds."""
     repo = CompletenessRepo(session)
     rows, total = await repo.list_incomplete(page=page, size=size)
     counts = await repo.for_animes([anime.id for anime, _ in rows])
@@ -341,8 +341,8 @@ async def update_local_episode_number(
     payload: EpisodeNumberUpdate,
     session: AsyncSession = Depends(get_db),
 ) -> LocalEpisodeOut:
-    """Manual episode-number correction (concept Kap. 14: filename parsing
-    can't cover every release naming scheme)."""
+    """Sets an episode number by hand, for files whose name the parser
+    can't read. A manual number survives later scans."""
     repo = LocalEpisodeRepo(session)
     episode = await repo.get(episode_id)
     if episode is None or episode.anime_id != anime_id:
@@ -380,10 +380,9 @@ class SortProposalOut(BaseModel):
 
 
 class AnimePendingActions(BaseModel):
-    """Everything on the Abfragen page that concerns this one series, so it
-    can be resolved from the series itself. Identification (review) and
-    duplicates are already part of the detail response; these are the two
-    that weren't."""
+    """The pending rename and sort proposals for one series, so they can be
+    resolved from its own page. (Identification review and duplicates are
+    already part of the detail response.)"""
 
     rename: RenameProposalOut | None
     sort: SortProposalOut | None

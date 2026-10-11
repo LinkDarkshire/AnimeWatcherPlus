@@ -37,6 +37,19 @@ Vorlagen mit Erklärungen: core/plugin_examples/ im Quellcode-Repository.
 Die Schnittstelle selbst ist in core/app/downloads/base.py dokumentiert.
 
 Nach dem Hinzufügen oder Ändern einer Datei die App neu starten.
+
+
+AnimeWatcherPlus -- your own download plugins
+==============================================
+
+Every .py file in this folder is loaded when the app starts. Each subclass
+of DownloadClient or SearchSource defined in it becomes available on the
+download page under "Einrichtung".
+
+Annotated templates: core/plugin_examples/ in the source repository. The
+plugin interface is documented in core/app/downloads/base.py.
+
+Restart the app after adding or changing a file.
 """
 
 

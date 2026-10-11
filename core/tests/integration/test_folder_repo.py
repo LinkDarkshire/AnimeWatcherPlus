@@ -3,7 +3,15 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select, text
 
-from app.db.models import Anime, AnimeProviderId, AnimeTag, ExpectedEpisode, JobLog, LocalEpisode, Tag
+from app.db.models import (
+    Anime,
+    AnimeProviderId,
+    AnimeTag,
+    ExpectedEpisode,
+    JobLog,
+    LocalEpisode,
+    Tag,
+)
 from app.db.repositories import AnimeRepo, FolderRepo, JobLogRepo, LocalEpisodeRepo
 
 

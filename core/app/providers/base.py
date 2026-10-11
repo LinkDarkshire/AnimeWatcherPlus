@@ -33,12 +33,8 @@ class MetadataProvider(ABC):
 
 
 class RateLimiter:
-    """Enforces a minimum interval between calls plus a hard daily cap.
-
-    NFA-04: >=2s between AniDB HTTP requests, configurable daily ceiling. In-memory
-    only for this MVP pass (resets on process restart) — persisting the daily
-    counter across restarts is deferred to M9/M10 hardening.
-    """
+    """Enforces a minimum interval between calls plus a daily cap. The daily
+    counter lives in memory only, so it starts over when the app restarts."""
 
     def __init__(self, min_interval_s: float, daily_cap: int | None = None) -> None:
         self.min_interval_s = min_interval_s
@@ -75,9 +71,8 @@ class RateLimiter:
 
 
 class CircuitBreaker:
-    """After N failures, stays open for `cooldown_s` so a dead provider doesn't
-    stall the identification pipeline (Kap. 9.2).
-    """
+    """After `failure_threshold` failures in a row, stays open for
+    `cooldown_s`, so an unreachable provider doesn't stall identification."""
 
     def __init__(self, failure_threshold: int = 5, cooldown_s: float = 600.0) -> None:
         self.failure_threshold = failure_threshold
@@ -112,11 +107,9 @@ class CircuitBreaker:
 
 
 class ProviderRegistry:
-    """Holds the configurable Primär/Sekundär/Tertiär provider chain (FA-06).
-
-    Only AniDB is registered in this MVP pass; Jikan/TMDB (FA-25) plug into the
-    same chain in M9 without touching this class.
-    """
+    """The metadata providers in the order they're asked (primary first).
+    Currently only AniDB is registered; further providers plug into the same
+    chain."""
 
     def __init__(self) -> None:
         self._chain: list[MetadataProvider] = []

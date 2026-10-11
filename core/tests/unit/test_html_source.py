@@ -9,8 +9,8 @@ import respx
 
 from app.downloads import SearchQuery, SearchSourceError, SeriesHit
 
-TEMPLATE = Path(__file__).resolve().parents[2] / "plugin_examples" / "vorlage_webseite.py"
-BASE = "https://www.beispiel-seite.example"
+TEMPLATE = Path(__file__).resolve().parents[2] / "plugin_examples" / "website_template.py"
+BASE = "https://www.example-site.example"
 
 SEARCH_PAGE = """
 <html><body><div class="results">
@@ -52,10 +52,10 @@ SERIES_PAGE = """
 
 
 def _template_class():
-    spec = importlib.util.spec_from_file_location("vorlage_webseite_test", TEMPLATE)
+    spec = importlib.util.spec_from_file_location("website_template_test", TEMPLATE)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.MeineSeite
+    return module.ExampleSite
 
 
 @pytest.mark.asyncio

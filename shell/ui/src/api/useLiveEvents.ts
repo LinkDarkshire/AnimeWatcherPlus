@@ -14,10 +14,9 @@ const RECONNECT_DELAY_MS = 3000
  * window. */
 const INVALIDATE_DEBOUNCE_MS = 700
 
-/** Subscribes to the Core's WS event stream and invalidates the relevant
- * TanStack Query caches so the UI reflects scan/identify/sort progress live
- * (Kap. 7.2). Reconnects automatically if the sidecar restarts.
- */
+/** Listens to the core's live events and refreshes the affected data, so
+ * scans, identification and sorting show up without reloading. Reconnects
+ * on its own if the core restarts. */
 export function useLiveEvents() {
   const queryClient = useQueryClient()
 
@@ -88,7 +87,7 @@ export function useLiveEvents() {
             "rename-queue",
             "pending-actions-count",
             // A scan or identification changes which episodes are expected
-            // and which files are present, i.e. the soll/ist comparison.
+            // and which files are present.
             "missing-episodes",
             "missing-episodes-overview",
             "local-episodes",

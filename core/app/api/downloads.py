@@ -194,7 +194,7 @@ async def test_integration(
         await plugin.test_connection()
     except PluginError as exc:
         return TestResult(ok=False, message=str(exc))
-    except Exception as exc:  # noqa: BLE001 - user plugin code
+    except Exception as exc:
         return TestResult(ok=False, message=f"Interner Fehler: {type(exc).__name__}: {exc}")
     finally:
         await plugin.close()

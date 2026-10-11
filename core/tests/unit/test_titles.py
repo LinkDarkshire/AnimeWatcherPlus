@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from app.services import artwork
-from app.services.titles import load_variants_from_aniinfo
 from app.domain.titles import (
     DEFAULT_TITLE_ORDER,
     TITLE_VARIANT_EN,
@@ -11,6 +9,8 @@ from app.domain.titles import (
     pick_variants,
     resolve_title,
 )
+from app.services import artwork
+from app.services.titles import load_variants_from_aniinfo
 
 # Same shape AniDB emits: one type="main" entry plus several per-language
 # entries of differing quality.

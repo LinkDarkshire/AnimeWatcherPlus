@@ -112,7 +112,7 @@ def _directory_signature(anime_dir: Path) -> tuple[int, float]:
 
 
 class _Handler(FileSystemEventHandler):
-    def __init__(self, scanner: "ScannerService", folder: Folder) -> None:
+    def __init__(self, scanner: ScannerService, folder: Folder) -> None:
         self._scanner = scanner
         self._folder = folder
 
@@ -137,12 +137,13 @@ class _Handler(FileSystemEventHandler):
 
 
 class ScannerService:
-    """Startup full-scan (FA-02) + watchdog live-watch with debounce (FA-03).
+    """Scans every folder at startup and then watches them for changes.
 
-    One asyncio task per "currently changing" anime directory implements the
-    debounce: it keeps sampling a (total_size, max_mtime) signature every
-    `scan_debounce_interval_s` and only proceeds once the signature has stayed
-    identical for `scan_debounce_checks` consecutive samples (Edge Case 1).
+    A change isn't processed right away: files that are still being copied
+    or downloaded would be read half-finished. Instead, one task per changing
+    anime directory samples its (total size, newest mtime) every
+    `scan_debounce_interval_s` and only goes ahead once that has stayed the
+    same for `scan_debounce_checks` samples in a row.
     """
 
     def __init__(
@@ -161,10 +162,9 @@ class ScannerService:
         self._loop: asyncio.AbstractEventLoop | None = None
 
     async def start(self) -> None:
-        """Attaches live-watch immediately so no changes are missed, then hands
-        the (potentially slow, large-library) full scan off to the background
-        job queue instead of blocking startup (NFA-01: UI must be usable in
-        <3s; the scan runs asynchronously afterwards)."""
+        """Starts watching right away so no change is missed, then queues the
+        full scan as a background job -- on a large library it can take a
+        while, and the UI should be usable immediately."""
         self._loop = asyncio.get_running_loop()
         async with session_scope() as session:
             folders = await FolderRepo(session).list_all()
@@ -214,7 +214,14 @@ class ScannerService:
         existing = self._pending_checks.get(key)
         if existing is not None and not existing.done():
             existing.cancel()
-        self._pending_checks[key] = asyncio.create_task(self._stabilize_and_process(folder, anime_dir))
+        task = asyncio.create_task(self._stabilize_and_process(folder, anime_dir))
+        self._pending_checks[key] = task
+        task.add_done_callback(partial(self._forget_check, key))
+
+    def _forget_check(self, key: str, task: asyncio.Task) -> None:
+        """Drops a finished check -- unless a newer one already replaced it."""
+        if self._pending_checks.get(key) is task:
+            del self._pending_checks[key]
 
     async def _stabilize_and_process(self, folder: Folder, anime_dir: Path) -> None:
         try:
@@ -278,12 +285,8 @@ class ScannerService:
                 # (possibly long) scan ran moves the anime to a path that
                 # listing never saw, and deleting it for that would be wrong.
                 if anime_path not in current_dirs and not await asyncio.to_thread(anime_path.is_dir):
-                    # No more soft "missing" state -- a previously-tracked
-                    # folder that's gone is removed from the catalog
-                    # outright, no confirmation (per user request). The
-                    # existing FK-safe delete (built for the duplicate-
-                    # resolution "delete one entry" flow) already handles
-                    # cascading child rows correctly.
+                    # The directory is gone, so its catalog entry goes too
+                    # (episodes, tags and the rest along with it).
                     anime_id, path = anime.id, anime.directory_path
                     await anime_repo.delete(anime_id)
                     await self._event_bus.publish("anime.removed", {"anime_id": anime_id, "path": path})
@@ -315,10 +318,8 @@ class ScannerService:
             episode_repo = LocalEpisodeRepo(session)
 
             if await folder_repo.get(folder.id) is None:
-                # The folder was deleted while this scan/debounce task was
-                # already running or queued (e.g. a long scan over a network
-                # share) -- stop instead of INSERTing against a folder_id
-                # that no longer exists (FK violation).
+                # The folder was removed from the app while this scan was
+                # queued or running -- stop rather than write rows for it.
                 logger.info("scan_aborted_folder_gone", folder_id=folder.id, path=str(anime_dir))
                 return
 
@@ -346,9 +347,8 @@ class ScannerService:
                     "anime.discovered", {"anime_id": anime.id, "path": str(anime_dir)}
                 )
 
-            # Scan-Cache (NFA-03): compare against what's already known before
-            # touching the DB, so an unchanged file costs a stat() call and
-            # nothing else -- this is what keeps repeat/background scans fast.
+            # Compare against what's already stored first: an unchanged file
+            # costs one stat() and no DB write, which keeps rescans fast.
             existing_by_path = {ep.file_path: ep for ep in await episode_repo.by_anime(anime.id)}
             seen_paths: set[str] = set()
             episodes_changed = False
@@ -362,13 +362,10 @@ class ScannerService:
                     existing is not None
                     and existing.file_size == file_size
                     and existing.file_mtime == file_mtime
-                    # The size/mtime cache only proves the *file* is unchanged,
-                    # not that the number stored for it is still what the parser
-                    # would say: numbers parsed by an older, weaker parser would
-                    # otherwise stick forever (675 files in a real library came
-                    # back as "missing episodes" that way). Re-parsing is pure
-                    # string work, so this adds no I/O; a hand-corrected number
-                    # is never touched.
+                    # Size and mtime only prove the file is unchanged, not that
+                    # its stored episode number is still what the parser says
+                    # today -- so the number is compared too (cheap, it's just
+                    # string parsing). Hand-corrected numbers are kept.
                     and (existing.manual_override or existing.ep_number == parsed_number)
                 ):
                     continue

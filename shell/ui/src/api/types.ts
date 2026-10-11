@@ -11,7 +11,7 @@ export interface Folder {
 
 export type IdentStatus = "pending" | "identified" | "needs_manual_id" | "review"
 
-/** FA-12 soll/ist comparison. null when the provider lists no numbered
+/** Expected vs. present episodes. null when the provider lists no numbered
  * episodes for this entry (or it isn't identified yet). */
 export interface Completeness {
   expected: number
@@ -202,7 +202,7 @@ export interface SortProposal {
   suggested_target_folder_id: number | null
 }
 
-/** The Abfragen-page entries that concern one series. */
+/** The open rename/sort proposals for one series. */
 export interface AnimePendingActions {
   rename: RenameProposal | null
   sort: SortProposal | null

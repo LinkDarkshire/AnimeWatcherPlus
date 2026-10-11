@@ -78,11 +78,11 @@ class _Plugin(ABC):
         self.config: dict[str, Any] = {f.key: f.default for f in self.settings_schema}
         self.config.update({k: v for k, v in config.items() if v is not None})
 
-    async def test_connection(self) -> None:
+    async def test_connection(self) -> None:  # noqa: B027 - optional hook, empty by default
         """Checks that the configured instance works. Raise a PluginError
         with a helpful message if it doesn't. Optional."""
 
-    async def close(self) -> None:
+    async def close(self) -> None:  # noqa: B027 - optional hook, empty by default
         """Releases resources (HTTP clients, ...). Optional."""
 
 
@@ -139,7 +139,7 @@ class SearchQuery:
 # Words that often stand in a title on one site and are missing on another.
 DEFAULT_STRIP_WORDS: tuple[str, ...] = ("OVA", "ONA", "The Animation")
 
-_EDGE_PUNCTUATION = " -–—:;,.·!?()[]"
+_EDGE_PUNCTUATION = " -–—:;,.·!?()[]"  # noqa: RUF001 - dashes are meant literally
 
 
 def _strip_words(title: str, words: Sequence[str]) -> str:

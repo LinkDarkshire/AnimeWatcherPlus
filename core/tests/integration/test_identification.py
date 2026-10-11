@@ -106,10 +106,10 @@ async def test_identify_no_nfo_no_titledump_candidates_needs_manual_id(
 @pytest.mark.asyncio
 async def test_identify_confident_fuzzy_match(db_session, tmp_path, settings, folder_id) -> None:
     xml = (
-        '<?xml version="1.0" encoding="UTF-8"?><animetitles>'
-        '<anime aid="17222"><title xml:lang="en" type="official">Mushoku Tensei Season 2</title></anime>'
-        "</animetitles>"
-    ).encode("utf-8")
+        b'<?xml version="1.0" encoding="UTF-8"?><animetitles>'
+        b'<anime aid="17222"><title xml:lang="en" type="official">Mushoku Tensei Season 2</title></anime>'
+        b"</animetitles>"
+    )
     await import_title_dump(db_session, gzip.compress(xml))
 
     anime_dir = tmp_path / "Mushoku Tensei Season 2"
@@ -133,11 +133,11 @@ async def test_identify_ambiguous_fuzzy_match_goes_to_review(
     db_session, tmp_path, settings, folder_id
 ) -> None:
     xml = (
-        '<?xml version="1.0" encoding="UTF-8"?><animetitles>'
-        '<anime aid="1"><title xml:lang="en" type="official">Fate Zero</title></anime>'
-        '<anime aid="2"><title xml:lang="en" type="official">Fate Zero Two</title></anime>'
-        "</animetitles>"
-    ).encode("utf-8")
+        b'<?xml version="1.0" encoding="UTF-8"?><animetitles>'
+        b'<anime aid="1"><title xml:lang="en" type="official">Fate Zero</title></anime>'
+        b'<anime aid="2"><title xml:lang="en" type="official">Fate Zero Two</title></anime>'
+        b"</animetitles>"
+    )
     await import_title_dump(db_session, gzip.compress(xml))
 
     anime_dir = tmp_path / "Fate"

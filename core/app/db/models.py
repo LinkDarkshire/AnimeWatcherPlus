@@ -3,12 +3,12 @@ from __future__ import annotations
 import datetime as dt
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     Float,
     ForeignKey,
     Integer,
-    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -21,7 +21,7 @@ class Base(DeclarativeBase):
 
 
 def utcnow() -> dt.datetime:
-    return dt.datetime.now(dt.timezone.utc)
+    return dt.datetime.now(dt.UTC)
 
 
 class Folder(Base):
@@ -35,7 +35,7 @@ class Folder(Base):
     offline: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    animes: Mapped[list["Anime"]] = relationship(back_populates="folder", cascade="all, delete-orphan")
+    animes: Mapped[list[Anime]] = relationship(back_populates="folder", cascade="all, delete-orphan")
 
 
 class Anime(Base):
@@ -44,9 +44,8 @@ class Anime(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     folder_id: Mapped[int] = mapped_column(ForeignKey("folder.id"), index=True)
     directory_path: Mapped[str] = mapped_column(String, unique=True)
-    # Intentionally NOT unique: FA-29 requires detecting (not preventing) the
-    # same AniDB ID sitting in two folders -- a hard DB constraint here would
-    # crash the second identification instead of flagging it as a duplicate.
+    # Not unique on purpose: the same anime can sit in two folders, and the
+    # app flags that as a duplicate instead of refusing the second copy.
     anidb_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     is_duplicate: Mapped[bool] = mapped_column(Boolean, default=False)
     duplicate_of_anime_id: Mapped[int | None] = mapped_column(
@@ -90,14 +89,14 @@ class Anime(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     folder: Mapped[Folder] = relationship(back_populates="animes")
-    expected_episodes: Mapped[list["ExpectedEpisode"]] = relationship(
+    expected_episodes: Mapped[list[ExpectedEpisode]] = relationship(
         back_populates="anime", cascade="all, delete-orphan"
     )
-    local_episodes: Mapped[list["LocalEpisode"]] = relationship(
+    local_episodes: Mapped[list[LocalEpisode]] = relationship(
         back_populates="anime", cascade="all, delete-orphan"
     )
-    tags: Mapped[list["AnimeTag"]] = relationship(back_populates="anime", cascade="all, delete-orphan")
-    provider_ids: Mapped[list["AnimeProviderId"]] = relationship(
+    tags: Mapped[list[AnimeTag]] = relationship(back_populates="anime", cascade="all, delete-orphan")
+    provider_ids: Mapped[list[AnimeProviderId]] = relationship(
         back_populates="anime", cascade="all, delete-orphan"
     )
 
@@ -139,7 +138,7 @@ class Tag(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     category: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    animes: Mapped[list["AnimeTag"]] = relationship(back_populates="tag", cascade="all, delete-orphan")
+    animes: Mapped[list[AnimeTag]] = relationship(back_populates="tag", cascade="all, delete-orphan")
 
 
 class AnimeTag(Base):

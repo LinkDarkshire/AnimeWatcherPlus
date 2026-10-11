@@ -9,10 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Anime, ExpectedEpisode, LocalEpisode
 
-# FA-12: soll/ist comparison of the provider's episode list against the files
-# actually on disk. Expressed in SQL rather than by loading episode rows into
-# Python, because the library list needs it for every card on a page and the
-# global view needs it across the whole catalog.
+# Compares the provider's episode list with the files actually on disk.
+# Done in SQL rather than in Python because the library needs it for every
+# card on a page and the missing-episodes view for the whole catalog.
 
 
 def _is_plain_number(column):
@@ -24,7 +23,8 @@ def _is_plain_number(column):
     otherwise be reported as permanently "missing" for nearly every series,
     since the local filename parser never produces such numbers either.
     """
-    return and_(column.op("GLOB")("[0-9]*"), ~column.op("GLOB")("*[^0-9]*"))
+    glob = column.op("GLOB", is_comparison=True)
+    return and_(glob("[0-9]*"), ~glob("*[^0-9]*"))
 
 
 # Episode numbers are stored as text and aren't consistently zero-padded on
@@ -169,15 +169,10 @@ class CompletenessRepo:
         return result
 
     async def list_incomplete(self, page: int, size: int) -> tuple[list[tuple[Anime, int]], int]:
-        """One page of the global "missing episodes" view: every identified
-        anime that has at least one expected episode without a file, newest
-        gaps first is meaningless here, so ordered by title like the library.
-
-        Anime with no episode structure at all (movies, single-entry OVAs with
-        one expected episode already on disk) never appear, because the
-        comparison simply finds nothing missing for them -- no special case
-        needed (concept Kap. 14, open point 5).
-        """
+        """One page of the missing-episodes view: every identified anime with
+        at least one expected episode that has no file, ordered by title.
+        Movies and single-episode OVAs that are on disk simply never show up,
+        since nothing is missing for them."""
         base = (
             select(Anime, missing_counts.c.missing)
             .join(missing_counts, missing_counts.c.anime_id == Anime.id)

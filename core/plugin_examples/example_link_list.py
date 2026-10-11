@@ -1,18 +1,18 @@
-"""Beispiel für eine eigene Such-Quelle (SearchSource).
+"""Example of your own search source (SearchSource).
 
-Installation: diese Datei in den Plugin-Ordner der App kopieren (wird auf
-der Download-Seite unter "Einrichtung" angezeigt, z. B.
-~/.local/share/AnimeWatcherPlus/plugins oder
-%APPDATA%\\AnimeWatcherPlus\\plugins) und die App neu starten.
+Installation: copy this file into the app's plugins folder (shown on the
+download page under "Einrichtung", e.g. ~/.local/share/AnimeWatcherPlus/plugins
+or %APPDATA%\\AnimeWatcherPlus\\plugins) and restart the app.
 
-Diese Quelle durchsucht eine einfache Textdatei, eine Zeile pro Link:
+This source searches a plain text file with one link per line:
 
-    Titel | Folge | Link
+    Title | Episode | Link
     Frieren | 3 | https://example.org/frieren-03.mkv
-    Frieren | | magnet:?xt=urn:btih:...        <- leere Folge: ganze Serie
+    Frieren | | magnet:?xt=urn:btih:...        <- no episode: the whole series
 
-Für eine Quelle, die eine Webseite oder API abfragt, nur `search` anders
-implementieren (z. B. mit httpx, das in der App bereits enthalten ist).
+For a source that asks a website or an API, only `search` needs to work
+differently (httpx is already part of the app). For websites with a search
+page, website_template.py does most of the work for you.
 """
 
 from __future__ import annotations
@@ -23,14 +23,13 @@ from app.downloads import SearchQuery, SearchResult, SearchSource, SearchSourceE
 
 
 class LinkListSource(SearchSource):
-    # Eindeutige ID -- darf sich später nicht mehr ändern, die eingerichteten
-    # Einträge verweisen darauf.
-    id = "beispiel_linkliste"
+    # Unique id. Don't change it later -- saved setups refer to it.
+    id = "example_link_list"
     name = "Linkliste (Textdatei)"
     description = "Sucht Links in einer eigenen Textdatei (Titel | Folge | Link)."
 
-    # Diese Felder fragt die App beim Einrichten ab. Typen: text, password,
-    # number, bool, path. Die Werte stehen danach in self.config.
+    # The settings the app asks for when this source is set up. Types: text,
+    # password, number, bool, path. The values end up in self.config.
     settings_schema = (
         SettingField("file", "Pfad zur Textdatei", type="path", required=True),
     )
@@ -40,7 +39,7 @@ class LinkListSource(SearchSource):
         try:
             text = path.read_text(encoding="utf-8")
         except OSError as exc:
-            # PluginError-Meldungen werden dem Benutzer so angezeigt.
+            # The message of a PluginError is shown to the user as is.
             raise SearchSourceError(f"Linkliste nicht lesbar: {exc}") from exc
         rows = []
         for line in text.splitlines():
@@ -53,8 +52,8 @@ class LinkListSource(SearchSource):
         self._lines()
 
     async def search(self, query: SearchQuery) -> list[SearchResult]:
-        # query.titles: alle bekannten Namen des Animes, bevorzugter zuerst.
-        # query.episode: Folgennummer, oder None für die ganze Serie.
+        # query.titles: every known name of the anime, the preferred one first.
+        # query.episode: the episode number, or None for the whole series.
         wanted_titles = {t.casefold() for t in query.titles}
         wanted_episode = "" if query.episode is None else str(query.episode)
         return [

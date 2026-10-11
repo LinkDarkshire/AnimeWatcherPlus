@@ -53,6 +53,25 @@ def decrypt(token: bytes, ciphertext: str) -> str:
     return (unpadder.update(data) + unpadder.finalize()).decode()
 
 
+def _read_error_type(body: str, token: bytes | None) -> str | None:
+    """MyJDownloader sends errors either as plain JSON or encrypted with the
+    current token; try both and return the error type ("AUTH_FAILED", ...)."""
+    texts = [body]
+    if token is not None:
+        try:
+            texts.append(decrypt(token, body))
+        except (ValueError, UnicodeDecodeError):
+            pass  # not encrypted with this token
+    for text in texts:
+        try:
+            data = json.loads(text)
+        except ValueError:
+            continue
+        if isinstance(data, dict) and data.get("type"):
+            return str(data["type"])
+    return None
+
+
 def _sign(key: bytes, data: str) -> str:
     return hmac.new(key, data.encode(), hashlib.sha256).hexdigest()
 
@@ -78,13 +97,7 @@ class _Session:
         return self._rid
 
     def _error(self, response: httpx.Response, token: bytes | None) -> DownloadClientError:
-        error_type = None
-        for attempt in (lambda: json.loads(response.text), lambda: json.loads(decrypt(token, response.text))):
-            try:
-                error_type = attempt().get("type")
-                break
-            except Exception:  # noqa: BLE001 - try the next way to read it
-                continue
+        error_type = _read_error_type(response.text, token)
         message = _ERROR_MESSAGES.get(error_type or "", f"MyJDownloader antwortet mit HTTP {response.status_code}")
         return DownloadClientError(message + (f" ({error_type})" if error_type and error_type not in _ERROR_MESSAGES else ""))
 

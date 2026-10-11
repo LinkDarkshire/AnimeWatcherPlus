@@ -8,7 +8,8 @@ TVSHOW_NFO = "tvshow.nfo"
 
 
 def read_anidb_id_from_nfo(anime_dir: Path) -> int | None:
-    """FA-04: if tvshow.nfo has <uniqueid type="anidb">, use it directly (no fuzzy lookup)."""
+    """The AniDB id from an existing tvshow.nfo (<uniqueid type="anidb">), if
+    there is one -- then no title matching is needed at all."""
     nfo_path = anime_dir / TVSHOW_NFO
     if not nfo_path.exists():
         return None
@@ -34,9 +35,8 @@ def write_tvshow_nfo(
     tags: list[str],
     has_local_poster: bool = False,
 ) -> Path:
-    """Writes/merges tvshow.nfo in Jellyfin/Kodi schema (FA-09). Merge-safe: foreign
-    elements the app doesn't own are preserved; only the fields we manage are replaced.
-    """
+    """Writes tvshow.nfo in the Jellyfin/Kodi format. An existing file is
+    updated, not replaced: elements the app doesn't manage are kept."""
     nfo_path = anime_dir / TVSHOW_NFO
     if nfo_path.exists():
         try:
@@ -90,8 +90,8 @@ def write_tvshow_nfo(
 def write_episode_nfo(
     episode_file: Path, *, title: str | None, ep_number: str, anidb_id: int
 ) -> bool:
-    """Per-episode `.nfo` next to the video file (FA-09). Returns True if the
-    file was actually written.
+    """Writes the per-episode `.nfo` next to the video file. Returns True if
+    the file was actually written.
 
     Unlike tvshow.nfo there is one of these per episode, so a library-wide
     metadata refresh would otherwise mean tens of thousands of small writes

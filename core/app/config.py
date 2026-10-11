@@ -36,8 +36,8 @@ class Settings(BaseSettings):
 
     scan_debounce_interval_s: float = 2.0
     scan_debounce_checks: int = 2
-    # Pause between anime directories during the background full-scan so it
-    # stays "gemächlich" and never competes with interactive API requests.
+    # Short pause between anime directories during a background full scan,
+    # so the scan never slows down the UI's own requests.
     scan_yield_interval_s: float = 0.1
 
     @property

@@ -7,9 +7,8 @@ import { Input } from "@/components/ui/input"
 import { useT } from "@/i18n/I18nContext"
 import type { LocalEpisodeItem } from "@/api/types"
 
-/** FA-12 per series: the soll/ist comparison plus the manual episode-number
- * correction the concept calls for, since filename parsing can't cover every
- * release naming scheme. */
+/** Missing episodes of one series, plus a way to correct episode numbers by
+ * hand for files whose names the parser can't read. */
 export function EpisodeSection({ animeId }: { animeId: number }) {
   const t = useT()
   const { data: missing } = useMissingEpisodes(animeId)

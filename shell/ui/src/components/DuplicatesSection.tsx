@@ -14,10 +14,9 @@ function GroupPoster({ posterPath, title }: { posterPath: string | null; title: 
   return <img src={posterUrl} alt={title} className="h-16 w-11 shrink-0 rounded object-cover" />
 }
 
-/** Kap. FA-29 follow-up: two catalog entries sharing the same AniDB ID need
- * a human decision -- either one was misidentified (change its ID) or it's
- * a genuine duplicate copy (delete one entry). Shown as its own section
- * under the review queue, per user request. */
+/** Catalog entries that share an AniDB id. Each needs a decision: either one
+ * was identified wrongly (change its id) or it really is a second copy
+ * (delete that entry). */
 export function DuplicatesSection() {
   const t = useT()
   const { data: groups, isLoading } = useDuplicates()

@@ -271,7 +271,7 @@ export function useResolveRename() {
   })
 }
 
-/** FA-12 per series: which episodes of the provider's list have no file. */
+/** Which episodes of the provider's list have no file, for one series. */
 export function useMissingEpisodes(animeId: number | undefined) {
   return useQuery({
     queryKey: ["missing-episodes", animeId],
@@ -280,8 +280,8 @@ export function useMissingEpisodes(animeId: number | undefined) {
   })
 }
 
-/** FA-12 global view, paginated the same way the library is -- an incomplete
- * list can itself run into the hundreds on a large catalog. */
+/** Every series with missing episodes, one page at a time -- on a large
+ * catalog the list itself can run into the hundreds. */
 export function useMissingEpisodesOverview(page: number, size = 50) {
   return useQuery({
     queryKey: ["missing-episodes-overview", page, size],
@@ -340,7 +340,7 @@ export function usePendingActionsCount() {
 }
 
 /** Everything on the series page that a sort or rename changes: the paths
- * shown, the file list, the soll/ist comparison and the open requests. */
+ * shown, the file list, the missing episodes and the open proposals. */
 function invalidateSeriesViews(queryClient: ReturnType<typeof useQueryClient>) {
   queryClient.invalidateQueries({ queryKey: ["anime"] })
   queryClient.invalidateQueries({ queryKey: ["anime-pending-actions"] })
@@ -348,8 +348,8 @@ function invalidateSeriesViews(queryClient: ReturnType<typeof useQueryClient>) {
   queryClient.invalidateQueries({ queryKey: ["missing-episodes"] })
 }
 
-/** Rename/sort proposals for one series, so they can be resolved from the
- * series page instead of only from the Abfragen list. */
+/** Rename/sort proposals for one series, so they can be resolved from its
+ * own page too. */
 export function useAnimePendingActions(animeId: number | undefined) {
   return useQuery({
     queryKey: ["anime-pending-actions", animeId],
@@ -364,6 +364,7 @@ export function useAnimePendingActions(animeId: number | undefined) {
 export function useRepairScan() {
   const queryClient = useQueryClient()
   return useMutation({
+    meta: { showsOwnError: true },
     mutationFn: () => api.post<RepairScanResult>("/api/v1/maintenance/repair-scan"),
     // It can touch titles, episode numbers, artwork and expected episodes at
     // once -- cheaper to refetch everything than to enumerate the effects.
@@ -408,6 +409,7 @@ export function useWishlistSearch(query: string) {
 export function useAddToWishlist() {
   const queryClient = useQueryClient()
   return useMutation({
+    meta: { showsOwnError: true },
     mutationFn: (anidbId: number) => api.post<WishlistItem>("/api/v1/wishlist", { anidb_id: anidbId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["wishlist"] })
@@ -447,6 +449,7 @@ type IntegrationInput = { name: string; enabled: boolean; config: Record<string,
 export function useSaveIntegration() {
   const queryClient = useQueryClient()
   return useMutation({
+    meta: { showsOwnError: true },
     mutationFn: ({ id, pluginId, ...input }: IntegrationInput & { id?: number; pluginId?: string }) =>
       id === undefined
         ? api.post<DownloadIntegration>("/api/v1/downloads/integrations", { plugin_id: pluginId, ...input })
@@ -498,6 +501,7 @@ export function useDownloadReleases() {
 export function useSendDownload() {
   const queryClient = useQueryClient()
   return useMutation({
+    meta: { showsOwnError: true },
     mutationFn: (payload: DownloadTarget & { client_id: number; link: string; folder_id?: number }) =>
       api.post<{ title: string; client_name: string }>("/api/v1/downloads/send", payload),
     onSuccess: () => {

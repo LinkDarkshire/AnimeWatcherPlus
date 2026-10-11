@@ -8,7 +8,8 @@ from xml.etree import ElementTree as ET
 
 import httpx
 import structlog
-from rapidfuzz import fuzz, process, utils as fuzz_utils
+from rapidfuzz import fuzz, process
+from rapidfuzz import utils as fuzz_utils
 from sqlalchemy import delete, func, insert, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,7 +25,7 @@ TITLE_DUMP_URL = "https://anidb.net/api/anime-titles.xml.gz"
 TITLE_DUMP_IMPORTED_AT_KEY = "titledump_imported_at"  # Setting.value: time.time() epoch seconds
 TITLE_DUMP_MAX_AGE_S = 7 * 24 * 3600
 
-_BRACKET_RE = re.compile(r"[\[(（【][^\])）】]*[\])）】]")
+_BRACKET_RE = re.compile(r"[\[(（【][^\])）】]*[\])）】]")  # noqa: RUF001 - full-width brackets from Japanese titles
 _YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 _SEP_RE = re.compile(r"[._]+")
 _WS_RE = re.compile(r"\s+")
@@ -36,9 +37,9 @@ _SCENE_WORDS_RE = re.compile(
 
 
 def normalize_folder_name(name: str) -> str:
-    """FA-05: normalize a release/folder name before fuzzy-matching it against the
-    local AniDB title dump (strip bracketed tags, dots/underscores, extra whitespace).
-    """
+    """Cleans a release/folder name up for matching against the AniDB title
+    list: drops bracketed tags, years and release words, turns dots and
+    underscores into spaces."""
     normalized = _BRACKET_RE.sub(" ", name)
     normalized = _YEAR_RE.sub(" ", normalized)
     normalized = _SCENE_WORDS_RE.sub(" ", normalized)
@@ -80,9 +81,8 @@ async def download_title_dump(client: httpx.AsyncClient) -> bytes:
 
 
 async def import_title_dump(session: AsyncSession, xml_bytes_gz: bytes) -> int:
-    """Wholesale-replaces the local title index (Kap. 6.1: "wird komplett ersetzt
-    statt migriert"). FTS5 mirror table is kept in sync by DB triggers.
-    """
+    """Replaces the local title index as a whole with the new dump. The
+    full-text search table follows automatically via DB triggers."""
     rows = parse_title_dump(xml_bytes_gz)
     await session.execute(delete(AnidbTitleEntry))
     if rows:
@@ -141,10 +141,9 @@ class FuzzyCandidate:
 
 
 async def fuzzy_match(session: AsyncSession, folder_name: str, limit: int = 5) -> list[FuzzyCandidate]:
-    """FA-05: resolve a normalized folder name against the local title dump only
-    (no per-search API calls, per NFA-04). Uses FTS5 to narrow candidates, then
-    rapidfuzz (WRatio) to score and rank them.
-    """
+    """Finds the anime a folder name most likely belongs to, using only the
+    local title list (no AniDB request). Full-text search narrows down the
+    candidates, then rapidfuzz scores and ranks them."""
     normalized = normalize_folder_name(folder_name)
     if not normalized:
         return []

@@ -13,6 +13,7 @@ import { usePendingActionsCount } from "@/api/hooks"
 import { AniDbActivity } from "@/components/AniDbActivity"
 import { AniDbBanBanner } from "@/components/AniDbBanBanner"
 import { EmptyFolderPrompt } from "@/components/EmptyFolderPrompt"
+import { ErrorToasts } from "@/components/ErrorToasts"
 import { Badge } from "@/components/ui/badge"
 import { useT } from "@/i18n/I18nContext"
 
@@ -72,6 +73,7 @@ function App() {
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
+      <ErrorToasts />
     </div>
   )
 }

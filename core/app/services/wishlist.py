@@ -85,7 +85,8 @@ async def _library_anime_ids(session: AsyncSession, anidb_ids: list[int]) -> dic
     ).all()
     found: dict[int, int] = {}
     for anidb_id, anime_id in rows:
-        found.setdefault(anidb_id, anime_id)
+        if anidb_id is not None:
+            found.setdefault(anidb_id, anime_id)
     return found
 
 

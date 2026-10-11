@@ -25,7 +25,7 @@ logger = structlog.get_logger(__name__)
 
 ANIDB_HTTP_API = "http://api.anidb.net:9001/httpapi"
 ANIDB_PICTURE_BASE = "http://img7.anidb.net/pics/anime/"
-CACHE_TTL_S = 7 * 24 * 3600  # NFA-04: 7 Tage Response-Cache
+CACHE_TTL_S = 7 * 24 * 3600  # answers are reused from the disk cache for 7 days
 BAN_SETTING_KEY = "anidb_banned_until"  # Setting.value: wall-clock time.time() epoch seconds
 
 
@@ -62,10 +62,9 @@ def cached_title_variants(settings: Settings, aid: int) -> Variants | None:
 
 
 class AniDBProvider(MetadataProvider):
-    """Reference metadata provider (A-06): registered HTTP client, strict rate
-    limiting, ban detection, and a 7-day on-disk response cache so repeated scans
-    of an unchanged library never re-hit the API (NFA-04, goal: 0 API bans).
-    """
+    """Fetches anime metadata from AniDB's HTTP API -- carefully: requests are
+    rate limited, a ban is detected and respected, and every answer is cached
+    on disk for 7 days, so rescanning an unchanged library sends nothing."""
 
     def __init__(self, settings: Settings, http_client: httpx.AsyncClient | None = None) -> None:
         self.manifest = ProviderManifest(
@@ -81,9 +80,8 @@ class AniDBProvider(MetadataProvider):
         self.circuit_breaker = CircuitBreaker()
         self._cache_dir = cache_dir(settings)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        # Wall-clock (time.time()), not monotonic: this must survive a
-        # process restart during the ~24h ban window (Kap. 9.3 Edge Case 6),
-        # so a restart can't accidentally resume hammering a still-banned API.
+        # Wall-clock time, not monotonic: the ban is saved and has to stay
+        # valid across a restart, so a restart can't resume requests early.
         self._banned_until: float = 0.0
         self.activity = AniDBActivity()
 
@@ -145,9 +143,8 @@ class AniDBProvider(MetadataProvider):
             await session.commit()
 
     async def search(self, title: str, year: int | None) -> list[SearchHit]:
-        # AniDB has no public HTTP text-search endpoint; the identification
-        # pipeline resolves titles via the local title dump (titledump.fuzzy_match)
-        # before ever calling fetch(). See Kap. 4.4 sequence diagram.
+        # AniDB's HTTP API has no title search. Identification finds the
+        # AniDB id in the local title list (titledump.fuzzy_match) instead.
         return []
 
     async def fetch(self, external_id: str) -> AnimeMetadata | None:
@@ -331,11 +328,9 @@ _EPISODE_TITLE_LANG_PREFERENCE = ("en", "x-jat", "ja")
 
 
 def _pick_preferred_episode_title(ep_el: ET.Element) -> str | None:
-    """Same language cascade as `_pick_primary_and_original` (English, then
-    romanized Japanese, then Japanese script), applied per-episode -- AniDB
-    emits one `<title xml:lang="...">` per language for each episode, and
-    `ep_el.find("title")` alone (the old behavior) just grabbed whichever one
-    happened to come first in document order."""
+    """The episode title in the preferred language: English, then romanized
+    Japanese, then Japanese script. AniDB lists one <title> per language for
+    each episode, in no particular order."""
     by_lang: dict[str | None, str] = {}
     first: str | None = None
     for t in ep_el.findall("title"):

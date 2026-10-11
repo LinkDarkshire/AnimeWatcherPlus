@@ -23,7 +23,6 @@ jobs:
         run: ruff check app tests
       - name: Type-check (mypy)
         run: mypy app --ignore-missing-imports
-        continue-on-error: true
       - name: Test (pytest)
         run: pytest -q
 
@@ -67,7 +66,7 @@ jobs:
         # exact path to exist for *any* cargo build/check, on every target
         # triple -- including this CI runner's, which never produces one
         # since the real sidecar is only ever built for Windows (via
-        # build.bat + PyInstaller, kept local, not committed). `cargo check`
+        # PyInstaller, kept local, not committed). `cargo check`
         # never executes the binary, it only needs the path to resolve, so
         # an empty placeholder is enough.
         run: |

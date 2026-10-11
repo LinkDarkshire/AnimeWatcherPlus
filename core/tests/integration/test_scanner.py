@@ -354,7 +354,7 @@ async def test_enqueue_metadata_rescan_skips_stale_anime(scanner_env, tmp_path) 
     root.mkdir()
     folder = await FolderRepo(session).create(str(root), "content", "Content")
 
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     fresh_dir = root / "Fresh Show"
     fresh_dir.mkdir()
     stale_dir = root / "Stale Show"
@@ -381,7 +381,7 @@ async def test_enqueue_metadata_rescan_ignore_staleness_includes_everything(scan
     root.mkdir()
     folder = await FolderRepo(session).create(str(root), "content", "Content")
 
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     stale_dir = root / "Stale Show"
     stale_dir.mkdir()
     await _make_identified_anime(
@@ -403,7 +403,7 @@ async def test_enqueue_metadata_rescan_respects_global_rule_toggle(scanner_env, 
     root.mkdir()
     folder = await FolderRepo(session).create(str(root), "content", "Content")
 
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     stale_dir = root / "Stale Show"
     stale_dir.mkdir()
     await _make_identified_anime(
@@ -432,7 +432,7 @@ async def test_enqueue_metadata_rescan_persists_no_scan_for_newly_stale_anime(
     root.mkdir()
     folder = await FolderRepo(session).create(str(root), "content", "Content")
 
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     stale_dir = root / "Stale Show"
     stale_dir.mkdir()
     stale_anime = await _make_identified_anime(
@@ -469,7 +469,7 @@ async def test_enqueue_metadata_rescan_skips_already_flagged_no_scan_without_rec
     root.mkdir()
     folder = await FolderRepo(session).create(str(root), "content", "Content")
 
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     show_dir = root / "Flagged Show"
     show_dir.mkdir()
     # A *fresh* air date -- is_stale() would say False if recomputed.
@@ -499,7 +499,7 @@ async def test_enqueue_metadata_rescan_ignore_staleness_still_includes_no_scan_a
     root.mkdir()
     folder = await FolderRepo(session).create(str(root), "content", "Content")
 
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     stale_dir = root / "Stale Show"
     stale_dir.mkdir()
     anime = await _make_identified_anime(
@@ -530,7 +530,7 @@ async def test_enqueue_metadata_rescan_rule_disabled_still_includes_no_scan_anim
     root.mkdir()
     folder = await FolderRepo(session).create(str(root), "content", "Content")
 
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     stale_dir = root / "Stale Show"
     stale_dir.mkdir()
     anime = await _make_identified_anime(

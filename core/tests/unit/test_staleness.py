@@ -31,19 +31,19 @@ def test_not_stale_when_never_refreshed() -> None:
 
 
 def test_not_stale_without_air_date_data() -> None:
-    anime = _anime(last_refresh=dt.datetime.now(dt.timezone.utc), air_dates=[])
+    anime = _anime(last_refresh=dt.datetime.now(dt.UTC), air_dates=[])
     assert is_stale(anime, threshold_days=182) is False
 
 
 def test_stale_when_gap_exceeds_threshold() -> None:
     last_air = dt.date(2020, 1, 1)
-    refreshed = dt.datetime(2021, 1, 1, tzinfo=dt.timezone.utc)  # 366 days later
+    refreshed = dt.datetime(2021, 1, 1, tzinfo=dt.UTC)  # 366 days later
     anime = _anime(last_refresh=refreshed, air_dates=[last_air])
     assert is_stale(anime, threshold_days=182) is True
 
 
 def test_not_stale_when_gap_within_threshold() -> None:
     last_air = dt.date(2020, 1, 1)
-    refreshed = dt.datetime(2020, 3, 1, tzinfo=dt.timezone.utc)  # 60 days later
+    refreshed = dt.datetime(2020, 3, 1, tzinfo=dt.UTC)  # 60 days later
     anime = _anime(last_refresh=refreshed, air_dates=[last_air])
     assert is_stale(anime, threshold_days=182) is False

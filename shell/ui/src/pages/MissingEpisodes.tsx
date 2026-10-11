@@ -10,8 +10,8 @@ import type { IncompleteAnime } from "@/api/types"
 
 const PAGE_SIZE = 50
 
-/** FA-12, global view: every series with at least one episode the provider
- * lists but that has no file on disk. */
+/** Every series with at least one episode the provider lists but that has
+ * no file on disk. */
 export function MissingEpisodes() {
   const t = useT()
   const [page, setPage] = useState(1)

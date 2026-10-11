@@ -14,10 +14,8 @@ EventHandler = Callable[[dict[str, Any]], Awaitable[None]]
 
 @dataclass
 class EventBus:
-    """Simple in-process pub/sub. WS-Gateway and internal services both subscribe.
-
-    Kap. 4.3: "verteilt Domain-Events an Abonnenten (WS-Gateway, Auto-Sort)".
-    """
+    """Simple in-process publish/subscribe. The WebSocket gateway forwards
+    every event to the UI; internal services subscribe for their own needs."""
 
     _subscribers: list[EventHandler] = field(default_factory=list)
 
@@ -30,7 +28,7 @@ class EventBus:
 
     async def publish(self, event: str, data: dict[str, Any]) -> None:
         payload = {"event": event, "data": data}
-        logger.info("event_published", event_name=event, data=data)
+        logger.debug("event_published", event_name=event, data=data)
         for handler in list(self._subscribers):
             try:
                 await handler(payload)
@@ -48,11 +46,9 @@ class Job:
 
 
 class JobQueue:
-    """Serializes long-running work (scan, identify, analyze, move, download) as jobs.
-
-    A single background worker task processes jobs one at a time; this matches the
-    "eine Writer-Verbindung" principle in Kap. 6.2 without needing a real queue broker.
-    """
+    """Runs long work (scans, identification, metadata refreshes) one job at a
+    time in a single background task. Doing it serially keeps SQLite writes
+    and AniDB requests from piling up on each other."""
 
     def __init__(self, event_bus: EventBus) -> None:
         self._event_bus = event_bus
@@ -83,9 +79,7 @@ class JobQueue:
 
     def pending_count(self, job_types: frozenset[str] | set[str]) -> int:
         """Queued or running jobs of these types."""
-        return sum(
-            1 for job in self.jobs.values() if job.job_type in job_types and job.status in ("queued", "running")
-        )
+        return sum(1 for job in self.jobs.values() if job.job_type in job_types)
 
     async def _worker(self) -> None:
         while True:
@@ -94,9 +88,12 @@ class JobQueue:
             try:
                 await job.coro_factory()
                 job.status = "done"
-            except Exception as exc:  # noqa: BLE001 - isolate job failures (NFA-12)
+            except Exception as exc:
                 job.status = "failed"
                 job.error = str(exc)
                 logger.exception("job_failed", job_type=job.job_type, job_id=job.id)
             finally:
+                # Only queued and running jobs are kept; finished ones would
+                # otherwise pile up for as long as the app runs.
+                self.jobs.pop(job.id, None)
                 self._queue.task_done()

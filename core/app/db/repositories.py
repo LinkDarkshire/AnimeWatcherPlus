@@ -88,7 +88,8 @@ class FolderRepo:
 
 
 class AnimeRepo:
-    """All writes that touch `anime` also keep `anime_search_fts` in sync (Kap. 6.2)."""
+    """Reads and writes anime rows. Every write that changes a title also
+    updates the full-text search table `anime_search_fts`."""
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -213,18 +214,14 @@ class AnimeRepo:
             if anime.anidb_id is None:  # excluded by the query; keeps the key type honest
                 continue
             groups.setdefault(anime.anidb_id, []).append(anime)
-        # Entries stay in id order within a group (the lowest id is the one the
-        # others are flagged as duplicates of); the groups themselves are listed
-        # alphabetically like every other queue on the Abfragen page.
+        # Within a group, entries stay in id order (the lowest id is the one the
+        # others are marked as duplicates of); the groups are sorted by title.
         return sorted(groups.items(), key=lambda item: item[1][0].title.casefold())
 
     async def sync_fts(self, anime: Anime, *, commit: bool = True) -> None:
-        """Rewrites this anime's row in the FTS mirror. The searchable text
-        deliberately includes the three language variants on top of
-        `alt_titles`: `alt_titles` is captured at identification time as
-        "everything except the title that was primary *then*", so once the
-        display-title order changes, the previously primary title would
-        otherwise silently drop out of the search index."""
+        """Rewrites this anime's row in the search index. Besides `alt_titles`
+        it indexes all three language variants, so every title stays
+        searchable whichever one is currently shown as the display title."""
         searchable = [*(anime.alt_titles or []), anime.title_main, anime.title_en, anime.title_ja]
         alt_text = " ".join(dict.fromkeys(value for value in searchable if value))
         await self.session.execute(
@@ -265,9 +262,8 @@ class AnimeRepo:
         anime = await self.session.get(Anime, anime_id)
         assert anime is not None
 
-        # FA-29: the same AniDB ID can legitimately exist in two folders
-        # (duplicate copies of a series) -- flag it rather than silently
-        # overwriting or letting a DB constraint reject the second one.
+        # The same anime can exist in two folders (two copies of a series):
+        # mark the second one as a duplicate instead of rejecting it.
         if anidb_id is not None:
             existing = await self.session.execute(
                 select(Anime).where(Anime.anidb_id == anidb_id, Anime.id != anime_id)
@@ -292,7 +288,7 @@ class AnimeRepo:
         anime.ident_status = ident_status
         anime.match_score = match_score
         anime.episode_count_expected = len(expected_episodes) or None
-        anime.last_metadata_refresh = dt.datetime.now(dt.timezone.utc)
+        anime.last_metadata_refresh = dt.datetime.now(dt.UTC)
 
         await self.session.execute(delete(AnimeTag).where(AnimeTag.anime_id == anime_id))
         for name, weight, anidb_tag_id in tags:
@@ -338,13 +334,9 @@ class AnimeRepo:
         return anime
 
     async def _get_or_create_tag(self, name: str, anidb_tag_id: int | None) -> Tag:
-        """Looks up by `anidb_tag_id` first when available -- that's the
-        actual stable identity AniDB assigns; `name` is just a mutable label
-        that AniDB does occasionally rename (or that differs only in case
-        between two imports). Looking up by name first (the old behavior)
-        misses a renamed tag entirely and then tries to INSERT a second row
-        with the same anidb_tag_id, hitting its UNIQUE constraint.
-        """
+        """Finds a tag by its AniDB tag id first -- the id never changes,
+        while AniDB does rename tags now and then. Falls back to the name, and
+        creates the tag if neither exists."""
         if anidb_tag_id is not None:
             result = await self.session.execute(select(Tag).where(Tag.anidb_tag_id == anidb_tag_id))
             tag = result.scalar_one_or_none()
@@ -510,11 +502,9 @@ class LocalEpisodeRepo:
         return await self.session.get(LocalEpisode, episode_id)
 
     async def set_manual_ep_number(self, episode_id: int, ep_number: str | None) -> LocalEpisode | None:
-        """FA-12 / concept Kap. 14: filename parsing can't cover every release
-        naming scheme, so a wrong or missing episode number has to be
-        correctable by hand. Setting `manual_override` is what stops the next
-        scan from parsing the filename again and overwriting the correction
-        (see `upsert`); clearing the number back to None releases it."""
+        """Sets an episode number by hand, for filenames the parser can't
+        read. `manual_override` keeps later scans from overwriting it; setting
+        the number back to None hands it back to the parser."""
         episode = await self.session.get(LocalEpisode, episode_id)
         if episode is None:
             return None

@@ -3,10 +3,8 @@ import { useLanguage, useT } from "@/i18n/I18nContext"
 
 const LOCALE_BY_LANGUAGE: Record<string, string> = { de: "de-DE", en: "en-US" }
 
-/** Kap. 9.3 Edge Case 6: while AniDB has banned this client, the app must
- * show a banner rather than silently doing nothing (the identify jobs keep
- * completing instantly with no metadata, which otherwise looks broken).
- */
+/** Shown while AniDB has banned this client. During a ban nothing can be
+ * identified, and without this banner that would just look broken. */
 export function AniDbBanBanner() {
   const t = useT()
   const { language } = useLanguage()

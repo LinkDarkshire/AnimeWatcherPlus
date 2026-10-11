@@ -10,12 +10,11 @@ use tauri::{Manager, RunEvent, State};
 #[cfg(debug_assertions)]
 use std::path::PathBuf;
 
-/// Sidecar supervisor (Kap. 4.3 / 8): generates a per-session bearer token,
-/// spawns the Python core with a random free port, waits for `/health`, and
-/// exposes the connection info to the frontend. In debug builds this
-/// launches `core/.venv`'s interpreter directly (the dev workflow); in
-/// release builds it spawns the PyInstaller-bundled `externalBin` sidecar
-/// via tauri-plugin-shell instead (see build.bat / core/core.spec).
+/// Starts and supervises the Python core: generates a per-session bearer
+/// token, starts the core on a random free port, waits for `/health`, and
+/// hands port and token to the frontend. Debug builds run the core with
+/// `core/.venv`'s Python; release builds start the bundled PyInstaller
+/// executable (see core/core.spec).
 enum CoreChild {
     Dev(std::process::Child),
     Sidecar(tauri_plugin_shell::process::CommandChild),
@@ -51,7 +50,7 @@ fn find_free_port() -> u16 {
 }
 
 fn generate_token() -> String {
-    let mut bytes = [0u8; 32]; // 256-bit token (Kap. 8)
+    let mut bytes = [0u8; 32]; // 256-bit random token
     rand::thread_rng().fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
@@ -190,10 +189,8 @@ pub fn run() {
                 )?;
             }
 
-            // Spawning the core here (rather than before the builder exists,
-            // as before) is what the release path requires: resolving the
-            // bundled sidecar binary via tauri-plugin-shell needs a live
-            // AppHandle, which only exists once the app is being built.
+            // The core is started here because locating the bundled sidecar
+            // binary needs the AppHandle, which only exists from this point.
             let port = find_free_port();
             let token = generate_token();
             let child = spawn_core(app.handle(), port, &token);
