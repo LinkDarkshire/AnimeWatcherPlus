@@ -2,6 +2,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { api } from "./client"
 import { toQueryString, type AnimeFilters } from "@/lib/animeFilters"
 import type {
+  ActiveDownload,
   AnimeDetail,
   AnimePendingActions,
   AnimeListResponse,
@@ -511,6 +512,28 @@ export function useSendDownload() {
   return useMutation({
     mutationFn: (payload: DownloadTarget & { client_id: number; link: string; folder_id?: number }) =>
       api.post<{ title: string; client_name: string }>("/api/v1/downloads/send", payload),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["downloads-wanted"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["downloads-wanted"] })
+      queryClient.invalidateQueries({ queryKey: ["downloads-active"] })
+    },
+  })
+}
+
+/** Live progress of recently sent downloads. Polls every few seconds while
+ * anything is still running, rarely otherwise. */
+export function useActiveDownloads() {
+  return useQuery({
+    queryKey: ["downloads-active"],
+    queryFn: () => api.get<ActiveDownload[]>("/api/v1/downloads/active"),
+    refetchInterval: (query) =>
+      query.state.data?.some((d) => ["queued", "downloading"].includes(d.status.state)) ? 5_000 : 60_000,
+  })
+}
+
+export function useDismissDownload() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (requestId: number) => api.post<void>(`/api/v1/downloads/requests/${requestId}/dismiss`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["downloads-active"] }),
   })
 }

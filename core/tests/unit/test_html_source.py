@@ -189,3 +189,32 @@ def test_mixed_values_variant_name_and_label_based_link_sections() -> None:
     ]
     assert releases[0].link == "https://site.example/out/?sv=a&id=1"
     assert releases[0].details == {"Format": "MP4", "Size": "103 MB", "Subs": "None", "Audio": "Japanese"}
+
+
+def test_fallback_search_terms_strip_words_then_first_word() -> None:
+    from app.downloads import fallback_search_terms
+
+    assert fallback_search_terms(["OVA Tensura Nikki", "Tensura Nikki: The Animation"]) == [
+        "OVA Tensura Nikki",
+        "Tensura Nikki: The Animation",
+        "Tensura Nikki",
+        "Tensura",
+    ]
+    assert fallback_search_terms(["Frieren"]) == ["Frieren"]
+    assert fallback_search_terms(["A", "B", "C", "D"], max_titles=2) == ["A", "B"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_search_strips_ova_and_reports_tried_terms() -> None:
+    from app.downloads import NothingFound
+
+    respx.get(f"{BASE}/?s=OVA+Frieren+Special").mock(return_value=httpx.Response(200, text="<html></html>"))
+    respx.get(f"{BASE}/?s=Frieren+Special").mock(return_value=httpx.Response(200, text=SEARCH_PAGE))
+    hits = await _template_class()({}).search_series(SearchQuery(titles=["OVA Frieren Special"]))
+    assert len(hits) == 2
+
+    respx.get(url__startswith=f"{BASE}/?s=").mock(return_value=httpx.Response(200, text="<html></html>"))
+    with pytest.raises(NothingFound) as caught:
+        await _template_class()({}).search_series(SearchQuery(titles=["OVA Nichts Da"]))
+    assert "„OVA Nichts Da“, „Nichts Da“, „Nichts“" in str(caught.value)

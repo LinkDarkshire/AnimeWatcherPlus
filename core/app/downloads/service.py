@@ -20,6 +20,8 @@ from app.db.models import (
 )
 from app.downloads.base import (
     DownloadClient,
+    DownloadStatus,
+    NothingFound,
     PluginError,
     SearchQuery,
     SearchResult,
@@ -304,6 +306,8 @@ class SearchOutcome:
     results: list[SourceResult] = field(default_factory=list)
     series: list[SourceSeries] = field(default_factory=list)
     errors: dict[str, str] = field(default_factory=dict)
+    # Not errors, just information (NothingFound: which terms were tried).
+    notes: dict[str, str] = field(default_factory=dict)
 
 
 async def _guarded(outcome: SearchOutcome, source_name: str, coro: Any) -> Any:
@@ -312,6 +316,8 @@ async def _guarded(outcome: SearchOutcome, source_name: str, coro: Any) -> Any:
     survive it."""
     try:
         return await asyncio.wait_for(coro, timeout=60)
+    except NothingFound as exc:
+        outcome.notes[source_name] = str(exc)
     except PluginError as exc:
         outcome.errors[source_name] = str(exc)
     except TimeoutError:
@@ -421,7 +427,9 @@ async def send(
     try:
         if not plugin.accepts(link):
             raise DownloadError(f"'{integration.name}' kann diesen Link nicht verarbeiten")
-        await plugin.add(link, destination=await _destination(session, folder_id), package_name=target.package_name)
+        handle = await plugin.add(
+            link, destination=await _destination(session, folder_id), package_name=target.package_name
+        )
     finally:
         await plugin.close()
 
@@ -432,8 +440,115 @@ async def send(
         title=target.package_name,
         link=link,
         client_name=integration.name,
+        client_integration_id=integration.id,
+        external_id=handle if isinstance(handle, str) and handle else None,
     )
     session.add(request)
     await session.commit()
     logger.info("download_requested", client=integration.name, title=target.package_name)
     return request
+
+
+# --- Progress ----------------------------------------------------------------------
+
+ACTIVE_WINDOW = dt.timedelta(days=14)
+
+
+@dataclass
+class ActiveDownload:
+    request_id: int
+    title: str
+    client_name: str
+    requested_at: dt.datetime
+    anime_id: int | None
+    wishlist_entry_id: int | None
+    status: DownloadStatus
+
+
+async def active_downloads(
+    session: AsyncSession, registry: DownloadPluginRegistry, now: dt.datetime | None = None
+) -> list[ActiveDownload]:
+    """Everything sent in the last two weeks and not hidden, with live
+    progress from its client. One status call per client, for all of its
+    downloads at once; a client that can't be reached marks its downloads
+    as unknown instead of failing the whole list."""
+    now = now or dt.datetime.now(dt.UTC)
+    rows = list(
+        (
+            await session.execute(
+                select(DownloadRequest)
+                .where(DownloadRequest.dismissed.is_(False), DownloadRequest.created_at >= now - ACTIVE_WINDOW)
+                .order_by(DownloadRequest.created_at.desc())
+            )
+        ).scalars()
+    )
+
+    statuses: dict[int, DownloadStatus] = {}
+    by_client: dict[int, list[DownloadRequest]] = {}
+    for row in rows:
+        if row.client_integration_id is not None and row.external_id:
+            by_client.setdefault(row.client_integration_id, []).append(row)
+        else:
+            statuses[row.id] = DownloadStatus("unknown", message="Dieser Client meldet keinen Fortschritt")
+
+    async def poll(integration_id: int, requests: list[DownloadRequest]) -> None:
+        def mark_all(message: str) -> None:
+            for r in requests:
+                statuses[r.id] = DownloadStatus("unknown", message=message)
+
+        integration = await session.get(DownloadIntegration, integration_id)
+        if integration is None:
+            mark_all("Client wurde entfernt")
+            return
+        try:
+            plugin = instantiate(registry, integration)
+        except DownloadError as exc:
+            mark_all(str(exc))
+            return
+        if not isinstance(plugin, DownloadClient):
+            mark_all("Kein Download-Client")
+            return
+        try:
+            found = await asyncio.wait_for(plugin.status([r.external_id or "" for r in requests]), timeout=30)
+        except PluginError as exc:
+            mark_all(f"Status nicht abrufbar: {exc}")
+            return
+        except TimeoutError:
+            mark_all("Status nicht abrufbar: Zeitüberschreitung")
+            return
+        except Exception as exc:  # user plugin code
+            logger.exception("download_status_failed", client=integration.name)
+            mark_all(f"Status nicht abrufbar: {type(exc).__name__}: {exc}")
+            return
+        finally:
+            await plugin.close()
+        for r in requests:
+            statuses[r.id] = found.get(r.external_id or "") or DownloadStatus(
+                "unknown", message=f"Nicht (mehr) in {integration.name} gefunden"
+            )
+
+    # Sequential, not gathered: the clients share this request's DB session.
+    for integration_id, requests in by_client.items():
+        await poll(integration_id, requests)
+
+    return [
+        ActiveDownload(
+            request_id=row.id,
+            title=row.title,
+            client_name=row.client_name,
+            requested_at=row.created_at,
+            anime_id=row.anime_id,
+            wishlist_entry_id=row.wishlist_entry_id,
+            status=statuses[row.id],
+        )
+        for row in rows
+    ]
+
+
+async def dismiss(session: AsyncSession, request_id: int) -> bool:
+    row = await session.get(DownloadRequest, request_id)
+    if row is None:
+        return False
+    row.dismissed = True
+    await session.commit()
+    return True

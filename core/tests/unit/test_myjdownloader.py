@@ -35,6 +35,7 @@ class FakeMyJD:
         self.device_token = hashlib.sha256(_secret(EMAIL, PASSWORD, "device") + session).digest()
         self.calls: list[tuple[str, list]] = []
         self.disconnected = False
+        self.packages: dict[str, list[dict]] = {}
 
     def _check_signature(self, request: httpx.Request, key: bytes) -> dict[str, str]:
         parts = urlsplit(str(request.url))
@@ -62,7 +63,8 @@ class FakeMyJD:
             payload = json.loads(decrypt(self.device_token, request.content.decode()))
             device_id = path.split("/")[1].rsplit("_", 1)[1]
             self.calls.append((device_id, [json.loads(p) for p in payload["params"]]))
-            body = {"data": None, "rid": payload["rid"]}
+            method = "/" + path.split("/", 2)[2]
+            body = {"data": self.packages.get(method), "rid": payload["rid"]}
             return httpx.Response(200, text=encrypt(self.device_token, json.dumps(body)))
         raise AssertionError(f"unexpected request {path}")
 
@@ -124,3 +126,24 @@ def test_accepts_only_http_links() -> None:
     client = _client()
     assert client.accepts("https://host/file")
     assert not client.accepts("magnet:?xt=urn:btih:1")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_status_reads_download_list_and_linkgrabber() -> None:
+    server = FakeMyJD(devices=[{"id": "dev1", "name": "JD"}])
+    server.packages = {
+        "/downloadsV2/queryPackages": [
+            {"name": "Show - 01", "bytesLoaded": 50, "bytesTotal": 200, "running": True, "speed": 10, "eta": 15},
+            {"name": "Show - 02", "bytesLoaded": 200, "bytesTotal": 200, "finished": True, "status": "Fertig"},
+        ],
+        "/linkgrabberv2/queryPackages": [{"name": "Show - 03"}],
+    }
+    respx.route(url__startswith=API_URL).mock(side_effect=server.handle)
+
+    statuses = await _client().status(["Show - 01", "Show - 02", "Show - 03", "Show - 04"])
+
+    assert (statuses["Show - 01"].state, statuses["Show - 01"].progress) == ("downloading", 0.25)
+    assert statuses["Show - 02"].state == "finished"
+    assert statuses["Show - 03"].state == "queued"
+    assert "Show - 04" not in statuses

@@ -246,4 +246,10 @@ class DownloadRequest(Base):
     title: Mapped[str] = mapped_column(String)
     link: Mapped[str] = mapped_column(Text)
     client_name: Mapped[str] = mapped_column(String)
+    # For asking the client about progress: which configured client got it,
+    # and the handle its add() returned (torrent hash, tag, package name).
+    client_integration_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    external_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Hidden from the active-downloads list by the user.
+    dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

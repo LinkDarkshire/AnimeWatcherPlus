@@ -283,6 +283,9 @@ class SearchResponse(BaseModel):
     # then POST /releases lists its links.
     series: list[SeriesHitOut]
     errors: dict[str, str]
+    # Source name -> information that isn't an error (e.g. which search
+    # terms were tried when nothing was found).
+    notes: dict[str, str]
 
 
 def _search_response(outcome: service.SearchOutcome) -> SearchResponse:
@@ -314,6 +317,7 @@ def _search_response(outcome: service.SearchOutcome) -> SearchResponse:
             for s in outcome.series
         ],
         errors=outcome.errors,
+        notes=outcome.notes,
     )
 
 
@@ -394,3 +398,43 @@ async def send(
     except PluginError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return SendResponse(title=request.title, client_name=request.client_name)
+
+
+# --- Progress ------------------------------------------------------------------------
+
+
+class DownloadStatusOut(BaseModel):
+    state: str
+    progress: float | None
+    speed_bps: int | None
+    eta_seconds: int | None
+    message: str | None
+
+
+class ActiveDownloadOut(BaseModel):
+    request_id: int
+    title: str
+    client_name: str
+    requested_at: dt.datetime
+    anime_id: int | None
+    wishlist_entry_id: int | None
+    status: DownloadStatusOut
+
+
+@router.get("/active", response_model=list[ActiveDownloadOut])
+async def get_active_downloads(
+    session: AsyncSession = Depends(get_db), state: AppState = Depends(get_app_state)
+) -> list[ActiveDownloadOut]:
+    """Downloads sent in the last two weeks, with live progress from their
+    clients (also when those run in a container elsewhere)."""
+    return [
+        ActiveDownloadOut.model_validate(asdict(item))
+        for item in await service.active_downloads(session, state.download_plugins)
+    ]
+
+
+@router.post("/requests/{request_id}/dismiss", status_code=204)
+async def dismiss_download(request_id: int, session: AsyncSession = Depends(get_db)) -> None:
+    """Hides a download from the active list (the client isn't touched)."""
+    if not await service.dismiss(session, request_id):
+        raise HTTPException(status_code=404, detail="Download nicht gefunden")

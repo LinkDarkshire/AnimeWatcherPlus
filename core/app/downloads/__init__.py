@@ -1,8 +1,11 @@
 """Download clients and search sources. Plugins import from here."""
 
 from app.downloads.base import (
+    DEFAULT_STRIP_WORDS,
     DownloadClient,
     DownloadClientError,
+    DownloadStatus,
+    NothingFound,
     PluginError,
     SearchQuery,
     SearchResult,
@@ -11,13 +14,17 @@ from app.downloads.base import (
     SeriesHit,
     SettingField,
     TwoStageSearchSource,
+    fallback_search_terms,
 )
 from app.downloads.html_source import HtmlSiteSource
 
 __all__ = [
+    "DEFAULT_STRIP_WORDS",
     "DownloadClient",
     "DownloadClientError",
+    "DownloadStatus",
     "HtmlSiteSource",
+    "NothingFound",
     "PluginError",
     "SearchQuery",
     "SearchResult",
@@ -26,4 +33,5 @@ __all__ = [
     "SeriesHit",
     "SettingField",
     "TwoStageSearchSource",
+    "fallback_search_terms",
 ]

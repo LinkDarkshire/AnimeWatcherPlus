@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Link } from "react-router-dom"
 import { useDownloadIntegrations, useWanted } from "@/api/hooks"
 import type { DownloadRequestInfo, DownloadTarget, WantedAnime } from "@/api/types"
+import { ActiveDownloadsCard } from "@/components/downloads/ActiveDownloadsCard"
 import { IntegrationsCard } from "@/components/downloads/IntegrationsCard"
 import { SendPanel } from "@/components/downloads/SendPanel"
 import { Badge } from "@/components/ui/badge"
@@ -32,6 +33,8 @@ export function Downloads() {
         <h1 className="text-lg font-semibold">{t("downloads.title")}</h1>
         <p className="text-sm text-[hsl(var(--muted-foreground))]">{t("downloads.description")}</p>
       </div>
+
+      <ActiveDownloadsCard />
 
       {/* Expanded until there's at least one integration -- that's when it's needed. */}
       <details open={integrations !== undefined && integrations.length === 0}>

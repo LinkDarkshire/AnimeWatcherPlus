@@ -9,21 +9,10 @@ import {
 } from "@/api/hooks"
 import type { DownloadSearchResult, DownloadTarget } from "@/api/types"
 import { Badge } from "@/components/ui/badge"
+import { formatSize } from "@/lib/format"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useT } from "@/i18n/I18nContext"
-
-function formatSize(bytes: number | null): string | null {
-  if (!bytes) return null
-  const units = ["B", "KB", "MB", "GB", "TB"]
-  let value = bytes
-  let unit = 0
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024
-    unit++
-  }
-  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`
-}
 
 /** Search the configured sources for one episode/series and hand a link
  * (found or pasted) to a download client. */
@@ -105,6 +94,11 @@ export function SendPanel({ target }: { target: DownloadTarget }) {
 
       {search.data && (
         <div className="space-y-1">
+          {Object.entries({ ...search.data.notes, ...(releases.data?.notes ?? {}) }).map(([source, note]) => (
+            <p key={`note-${source}`} className="text-xs text-[hsl(var(--muted-foreground))]">
+              {t("downloads.sourceError", { source, error: note })}
+            </p>
+          ))}
           {Object.entries({ ...search.data.errors, ...(releases.data?.errors ?? {}) }).map(([source, error]) => (
             <p key={source} className="text-xs text-red-500">
               {t("downloads.sourceError", { source, error })}
@@ -147,7 +141,8 @@ export function SendPanel({ target }: { target: DownloadTarget }) {
           )}
 
           {(releases.data ?? search.data).results.length === 0 &&
-            (releases.data || search.data.series.length === 0) && (
+            (releases.data || search.data.series.length === 0) &&
+            Object.keys(search.data.notes).length === 0 && (
               <p className="text-xs text-[hsl(var(--muted-foreground))]">{t("downloads.noResults")}</p>
             )}
           {[...search.data.results, ...(releases.data?.results ?? [])].map((result, index) => (

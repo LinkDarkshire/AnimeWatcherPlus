@@ -360,4 +360,28 @@ export interface DownloadSearchResponse {
   series: DownloadSeriesHit[]
   /** Source name -> error message, for sources that failed. */
   errors: Record<string, string>
+  /** Source name -> information that isn't an error (e.g. which terms were tried). */
+  notes: Record<string, string>
+}
+
+export type DownloadState = "queued" | "downloading" | "paused" | "seeding" | "finished" | "error" | "unknown"
+
+export interface DownloadStatus {
+  state: DownloadState
+  /** 0..1 */
+  progress: number | null
+  speed_bps: number | null
+  eta_seconds: number | null
+  message: string | null
+}
+
+/** A download sent in the last two weeks, with live progress from its client. */
+export interface ActiveDownload {
+  request_id: number
+  title: string
+  client_name: string
+  requested_at: string
+  anime_id: number | null
+  wishlist_entry_id: number | null
+  status: DownloadStatus
 }

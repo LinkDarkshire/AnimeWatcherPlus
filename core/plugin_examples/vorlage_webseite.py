@@ -131,6 +131,12 @@ class MeineSeite(HtmlSiteSource):
     # Links der Seite so funktionieren. None = alle Links direkt verwenden.
     BROWSER_LINK_PATTERN = None
 
-    # Wie viele Titel des Animes nacheinander gesucht werden, bis etwas
-    # gefunden wird (englisch, romaji, japanisch, Synonyme).
+    # Gesucht wird in drei Runden, bis etwas gefunden wird:
+    #   1. die Titel des Animes (englisch, romaji, ...) -- so viele wie
+    #      MAX_TITLES_TRIED angibt,
+    #   2. dieselben Titel ohne die Wörter aus STRIP_WORDS
+    #      ("OVA Tensura Nikki" -> "Tensura Nikki"),
+    #   3. nur das erste Wort ("Tensura").
+    # Findet keine Runde etwas, zeigt die App an, wonach gesucht wurde.
     MAX_TITLES_TRIED = 3
+    STRIP_WORDS = ("OVA", "ONA", "The Animation")

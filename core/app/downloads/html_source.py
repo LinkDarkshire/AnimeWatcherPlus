@@ -33,12 +33,15 @@ import httpx
 from bs4 import BeautifulSoup, Tag
 
 from app.downloads.base import (
+    DEFAULT_STRIP_WORDS,
+    NothingFound,
     SearchQuery,
     SearchResult,
     SearchSourceError,
     SeriesHit,
     SettingField,
     TwoStageSearchSource,
+    fallback_search_terms,
 )
 
 _USER_AGENT = (
@@ -95,6 +98,10 @@ class HtmlSiteSource(TwoStageSearchSource):
     # How many of the anime's titles to try, in order, until the search
     # finds something (sites often know a series under only one name).
     MAX_TITLES_TRIED: ClassVar[int] = 3
+    # Removed from the titles in the second search round, when the full
+    # titles found nothing ("OVA Tensura Nikki" -> "Tensura Nikki"); the
+    # third round then tries the first word alone ("Tensura").
+    STRIP_WORDS: ClassVar[tuple[str, ...]] = DEFAULT_STRIP_WORDS
 
     settings_schema = (
         SettingField(
@@ -162,12 +169,13 @@ class HtmlSiteSource(TwoStageSearchSource):
 
     async def search_series(self, query: SearchQuery) -> list[SeriesHit]:
         self._check_configured()
-        for title in query.titles[: self.MAX_TITLES_TRIED]:
-            url = self.base_url + self.SEARCH_PATH.format(query=quote_plus(title))
+        terms = fallback_search_terms(query.titles, strip_words=self.STRIP_WORDS, max_titles=self.MAX_TITLES_TRIED)
+        for term in terms:
+            url = self.base_url + self.SEARCH_PATH.format(query=quote_plus(term))
             hits = self.parse_series(await self._fetch(url), url)
             if hits:
                 return hits
-        return []
+        raise NothingFound("Nichts gefunden -- gesucht nach: " + ", ".join(f"„{t}“" for t in terms))
 
     # --- Step 2 --------------------------------------------------------------------------
 

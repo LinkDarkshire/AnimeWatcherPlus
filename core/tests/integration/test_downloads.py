@@ -18,7 +18,10 @@ from app.config import Settings
 from app.db.models import DownloadRequest, ExpectedEpisode, LocalEpisode, WishlistEntry
 from app.db.repositories import AnimeRepo, FolderRepo
 from app.downloads import (
+    DownloadClient,
     DownloadClientError,
+    DownloadStatus,
+    NothingFound,
     SearchQuery,
     SearchResult,
     SearchSource,
@@ -348,3 +351,99 @@ async def test_two_stage_source_offers_series_then_lists_releases(client, db_ses
     assert release["title"] == "Show OVA 1"
     assert release["needs_browser"] is True
     assert release["details"] == {"Format": "MKV"} and release["hoster"] == "MEGA"
+
+
+class _ProgressClient(DownloadClient):
+    id = "progress_client"
+    name = "Progress"
+    statuses: dict = {}
+
+    def accepts(self, link: str) -> bool:
+        return True
+
+    async def add(self, link: str, *, destination: str | None, package_name: str) -> str | None:
+        return f"h-{link}"
+
+    async def status(self, handles: list[str]) -> dict:
+        return {h: s for h, s in self.statuses.items() if h in handles}
+
+
+class _NothingSource(TwoStageSearchSource):
+    id = "nothing_source"
+    name = "Nothing"
+
+    async def search_series(self, query: SearchQuery) -> list[SeriesHit]:
+        raise NothingFound("Nichts gefunden -- gesucht nach: „A“")
+
+    async def list_releases(self, series: SeriesHit, query: SearchQuery) -> list[SearchResult]:
+        return []
+
+
+@pytest.mark.asyncio
+async def test_nothing_found_is_a_note_not_an_error(client, db_session, tmp_path, state) -> None:
+    state.download_plugins.register(_NothingSource)
+    anime_id = await _anime_with_episodes(db_session, tmp_path, "Show", 9, [(1, None)])
+    await client.post("/api/v1/downloads/integrations", json={"plugin_id": "nothing_source", "name": "N"})
+
+    body = (await client.post("/api/v1/downloads/search", json={"anime_id": anime_id, "episode": 1})).json()
+
+    assert body["errors"] == {}
+    assert body["notes"] == {"N": "Nichts gefunden -- gesucht nach: „A“"}
+
+
+@pytest.mark.asyncio
+async def test_active_downloads_show_live_status_and_can_be_hidden(client, db_session, tmp_path, state) -> None:
+    state.download_plugins.register(_ProgressClient)
+    _ProgressClient.statuses = {"h-https://x/1": DownloadStatus("downloading", 0.5, 2048, 30)}
+    anime_id = await _anime_with_episodes(db_session, tmp_path, "Show", 9, [(1, None), (2, None)])
+    progress = (await client.post("/api/v1/downloads/integrations", json={"plugin_id": "progress_client", "name": "P"})).json()
+    watch = tmp_path / "fw"
+    watch.mkdir()
+    jd = (
+        await client.post(
+            "/api/v1/downloads/integrations",
+            json={"plugin_id": "jdownloader", "name": "JD", "config": {"watch_folder": str(watch)}},
+        )
+    ).json()
+
+    for client_id, link, episode in ((progress["id"], "https://x/1", 1), (progress["id"], "https://x/2", 2), (jd["id"], "https://x/3", 2)):
+        sent = await client.post(
+            "/api/v1/downloads/send",
+            json={"client_id": client_id, "link": link, "anime_id": anime_id, "episode": episode},
+        )
+        assert sent.status_code == 200
+
+    active = (await client.get("/api/v1/downloads/active")).json()
+    by_link = {a["title"] + "|" + a["client_name"]: a["status"] for a in active}
+    assert by_link["Show - 01|P"] == {
+        "state": "downloading", "progress": 0.5, "speed_bps": 2048, "eta_seconds": 30, "message": None
+    }
+    assert by_link["Show - 02|P"]["state"] == "unknown"  # client no longer knows it
+    assert by_link["Show - 02|JD"]["message"] == "Dieser Client meldet keinen Fortschritt"
+
+    first = next(a for a in active if a["title"] == "Show - 01")
+    assert (await client.post(f"/api/v1/downloads/requests/{first['request_id']}/dismiss")).status_code == 204
+    remaining = (await client.get("/api/v1/downloads/active")).json()
+    assert first["request_id"] not in {a["request_id"] for a in remaining}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_qbittorrent_tags_downloads_and_reads_their_status() -> None:
+    add = respx.post("http://qb:8080/api/v2/torrents/add").mock(return_value=httpx.Response(200, text="Ok."))
+    client = QBittorrentClient({"url": "http://qb:8080"})
+
+    tag = await client.add("magnet:?xt=1", destination=None, package_name="Show")
+    assert tag and tag.startswith("awp-") and tag in add.calls.last.request.content.decode()
+
+    respx.get("http://qb:8080/api/v2/torrents/info", params={"tag": tag}).mock(
+        return_value=httpx.Response(
+            200, json=[{"state": "downloading", "progress": 0.4, "dlspeed": 500, "eta": 8640000}]
+        )
+    )
+    respx.get("http://qb:8080/api/v2/torrents/info", params={"tag": "awp-gone"}).mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    statuses = await client.status([tag, "awp-gone"])
+    assert (statuses[tag].state, statuses[tag].progress, statuses[tag].eta_seconds) == ("downloading", 0.4, None)
+    assert "awp-gone" not in statuses

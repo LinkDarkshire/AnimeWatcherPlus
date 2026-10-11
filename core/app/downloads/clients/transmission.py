@@ -4,9 +4,31 @@ from typing import Any
 
 import httpx
 
-from app.downloads.base import DownloadClient, DownloadClientError, SettingField
+from app.downloads.base import DownloadClient, DownloadClientError, DownloadStatus, SettingField
 
 _SESSION_HEADER = "X-Transmission-Session-Id"
+
+# Transmission's torrent status codes (RPC spec, "status" field).
+_STOPPED, _CHECK_WAIT, _CHECK, _DOWNLOAD_WAIT, _DOWNLOAD, _SEED_WAIT, _SEED = range(7)
+
+
+def _transmission_status(torrent: dict[str, Any]) -> DownloadStatus:
+    progress = float(torrent.get("percentDone") or 0.0)
+    eta = torrent.get("eta")
+    eta_seconds = int(eta) if isinstance(eta, int) and eta >= 0 else None
+    speed = int(torrent.get("rateDownload") or 0) or None
+    if torrent.get("error"):
+        return DownloadStatus("error", progress, message=str(torrent.get("errorString") or "Fehler"))
+    code = torrent.get("status")
+    if progress >= 1.0:
+        return DownloadStatus("seeding" if code in (_SEED_WAIT, _SEED) else "finished", 1.0)
+    if code == _STOPPED:
+        return DownloadStatus("paused", progress)
+    if code in (_CHECK_WAIT, _CHECK):
+        return DownloadStatus("queued", progress, message="Prüft Daten")
+    if code == _DOWNLOAD_WAIT:
+        return DownloadStatus("queued", progress)
+    return DownloadStatus("downloading", progress, speed, eta_seconds)
 
 
 class TransmissionClient(DownloadClient):
@@ -88,13 +110,26 @@ class TransmissionClient(DownloadClient):
     async def test_connection(self) -> None:
         await self._rpc("session-get", {"fields": ["version"]})
 
-    async def add(self, link: str, *, destination: str | None, package_name: str) -> None:
+    async def add(self, link: str, *, destination: str | None, package_name: str) -> str | None:
         arguments: dict[str, Any] = {"filename": link, "paused": not self.config.get("auto_start")}
         target = self.config.get("download_path") or destination
         if target:
             arguments["download-dir"] = target
+        result = await self._rpc("torrent-add", arguments)
         # "torrent-duplicate" is fine too: it's already there.
-        await self._rpc("torrent-add", arguments)
+        torrent = result.get("torrent-added") or result.get("torrent-duplicate") or {}
+        handle = torrent.get("hashString")
+        return str(handle) if handle else None
+
+    async def status(self, handles: list[str]) -> dict[str, DownloadStatus]:
+        result = await self._rpc(
+            "torrent-get",
+            {
+                "ids": handles,
+                "fields": ["hashString", "status", "percentDone", "rateDownload", "eta", "error", "errorString"],
+            },
+        )
+        return {str(t["hashString"]): _transmission_status(t) for t in result.get("torrents") or []}
 
     async def close(self) -> None:
         await self._http.aclose()

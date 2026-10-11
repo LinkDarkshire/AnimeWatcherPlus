@@ -1,10 +1,35 @@
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import httpx
 
-from app.downloads.base import DownloadClient, DownloadClientError, SettingField
+from app.downloads.base import DownloadClient, DownloadClientError, DownloadStatus, SettingField
+
+_QB_ETA_INFINITE = 8640000  # qBittorrent's "no estimate"
+
+
+def _qbittorrent_status(torrent: dict[str, Any]) -> DownloadStatus:
+    state = str(torrent.get("state") or "")
+    progress = float(torrent.get("progress") or 0.0)
+    eta = torrent.get("eta")
+    eta_seconds = int(eta) if isinstance(eta, int) and 0 <= eta < _QB_ETA_INFINITE else None
+    speed = int(torrent.get("dlspeed") or 0) or None
+    if state in ("error", "missingFiles"):
+        return DownloadStatus("error", progress, message="Fehler" if state == "error" else "Dateien fehlen")
+    if progress >= 1.0:
+        seeding = state in ("uploading", "stalledUP", "forcedUP", "queuedUP")
+        return DownloadStatus("seeding" if seeding else "finished", 1.0)
+    if state in ("pausedDL", "stoppedDL"):
+        return DownloadStatus("paused", progress)
+    if state in ("queuedDL", "checkingDL", "checkingResumeData", "allocating", "moving"):
+        return DownloadStatus("queued", progress)
+    if state == "metaDL":
+        return DownloadStatus("downloading", progress, speed, eta_seconds, "Lädt Torrent-Metadaten")
+    if state == "stalledDL":
+        return DownloadStatus("downloading", progress, speed, eta_seconds, "Keine Verbindung zu Peers")
+    return DownloadStatus("downloading", progress, speed, eta_seconds)
 
 
 class QBittorrentClient(DownloadClient):
@@ -76,9 +101,12 @@ class QBittorrentClient(DownloadClient):
         if response.status_code != 200:
             raise DownloadClientError(f"qBittorrent antwortet mit HTTP {response.status_code}")
 
-    async def add(self, link: str, *, destination: str | None, package_name: str) -> None:
+    async def add(self, link: str, *, destination: str | None, package_name: str) -> str | None:
         await self._login()
-        fields: dict[str, str] = {"urls": link}
+        # qBittorrent doesn't answer with the torrent's hash, so each download
+        # gets its own tag to find it again for the progress display.
+        tag = f"awp-{uuid.uuid4().hex[:12]}"
+        fields: dict[str, str] = {"urls": link, "tags": tag}
         save_path = self.config.get("save_path") or destination
         if save_path:
             fields["savepath"] = save_path
@@ -93,6 +121,19 @@ class QBittorrentClient(DownloadClient):
             raise DownloadClientError("qBittorrent verlangt eine Anmeldung")
         if response.status_code != 200 or response.text.strip() == "Fails.":
             raise DownloadClientError(f"qBittorrent hat den Link abgelehnt (HTTP {response.status_code})")
+        return tag
+
+    async def status(self, handles: list[str]) -> dict[str, DownloadStatus]:
+        await self._login()
+        found: dict[str, DownloadStatus] = {}
+        for tag in handles:
+            response = await self._request("GET", "/api/v2/torrents/info", params={"tag": tag})
+            if response.status_code != 200:
+                raise DownloadClientError(f"qBittorrent antwortet mit HTTP {response.status_code}")
+            torrents = response.json()
+            if torrents:
+                found[tag] = _qbittorrent_status(torrents[0])
+        return found
 
     async def close(self) -> None:
         await self._http.aclose()

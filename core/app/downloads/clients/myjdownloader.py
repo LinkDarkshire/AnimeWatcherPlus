@@ -12,7 +12,7 @@ import httpx
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-from app.downloads.base import DownloadClient, DownloadClientError, SettingField
+from app.downloads.base import DownloadClient, DownloadClientError, DownloadStatus, SettingField
 
 API_URL = "https://api.jdownloader.org"
 # Identifies this application to the MyJDownloader service.
@@ -140,6 +140,25 @@ class _Session:
         return json.loads(decrypt(self._device_token, response.text)).get("data")
 
 
+def _jd_status(package: dict[str, Any]) -> DownloadStatus:
+    total = int(package.get("bytesTotal") or 0)
+    loaded = int(package.get("bytesLoaded") or 0)
+    progress = loaded / total if total > 0 else None
+    message = package.get("status") or None
+    if package.get("finished"):
+        return DownloadStatus("finished", 1.0, message=message)
+    if package.get("running"):
+        eta = package.get("eta")
+        return DownloadStatus(
+            "downloading",
+            progress,
+            int(package.get("speed") or 0) or None,
+            int(eta) if isinstance(eta, int) and eta >= 0 else None,
+            message,
+        )
+    return DownloadStatus("queued", progress, message=message)
+
+
 class MyJDownloaderClient(DownloadClient):
     """JDownloader 2 via the MyJDownloader service. Works wherever
     JDownloader runs -- a Docker container, the NAS, another PC -- as long as
@@ -204,7 +223,7 @@ class MyJDownloaderClient(DownloadClient):
         finally:
             await session.disconnect()
 
-    async def add(self, link: str, *, destination: str | None, package_name: str) -> None:
+    async def add(self, link: str, *, destination: str | None, package_name: str) -> str | None:
         session = await self._session()
         try:
             device_id = await self._with_device(session)
@@ -220,6 +239,47 @@ class MyJDownloaderClient(DownloadClient):
             await session.call(device_id, "/linkgrabberv2/addLinks", [query])
         finally:
             await session.disconnect()
+        # JDownloader keeps the package name (overwritePackagizerRules), so
+        # it finds the download again for the progress display.
+        return package_name
+
+    async def status(self, handles: list[str]) -> dict[str, DownloadStatus]:
+        session = await self._session()
+        try:
+            device_id = await self._with_device(session)
+            downloads = await session.call(
+                device_id,
+                "/downloadsV2/queryPackages",
+                [
+                    {
+                        "bytesLoaded": True,
+                        "bytesTotal": True,
+                        "finished": True,
+                        "running": True,
+                        "speed": True,
+                        "eta": True,
+                        "status": True,
+                        "maxResults": -1,
+                        "startAt": 0,
+                    }
+                ],
+            )
+            grabbed = await session.call(
+                device_id, "/linkgrabberv2/queryPackages", [{"maxResults": -1, "startAt": 0}]
+            )
+        finally:
+            await session.disconnect()
+
+        by_name = {str(p.get("name")): p for p in downloads or []}
+        waiting = {str(p.get("name")) for p in grabbed or []}
+        found: dict[str, DownloadStatus] = {}
+        for name in handles:
+            package = by_name.get(name)
+            if package is not None:
+                found[name] = _jd_status(package)
+            elif name in waiting:
+                found[name] = DownloadStatus("queued", message="Wartet im Linkgrabber auf Bestätigung")
+        return found
 
     async def close(self) -> None:
         await self._http.aclose()
