@@ -961,3 +961,41 @@ async def test_anidb_status_reports_block_and_waiting_work(db_session, tmp_path)
 async def test_library_page_size_setting(client, size, ok) -> None:
     response = await client.put("/api/v1/settings", json={"values": {"library_page_size": size}})
     assert (response.status_code == 200) is ok
+
+
+@pytest.mark.asyncio
+async def test_unassigned_files_endpoint_and_assigning(client, db_session, tmp_path) -> None:
+    from app.db.models import ExpectedEpisode, LocalEpisode
+    from app.db.repositories import AnimeRepo, FolderRepo
+
+    folder = await FolderRepo(db_session).create(str(tmp_path / "c"), "content", "C")
+    anime = await AnimeRepo(db_session).create_pending(folder.id, str(tmp_path / "c" / "Kyouka"), "Kyouka")
+    anime.ident_status = "identified"
+    db_session.add(ExpectedEpisode(anime_id=anime.id, ep_number="1", title="First"))
+    file = LocalEpisode(anime_id=anime.id, file_path=str(tmp_path / "c" / "Kyouka" / "Kyouka Vol.01.mp4"))
+    db_session.add(file)
+    await db_session.commit()
+
+    [group] = (await client.get("/api/v1/unassigned-files")).json()
+    assert group["title"] == "Kyouka"
+    assert group["files"] == [{"episode_id": file.id, "file_name": "Kyouka Vol.01.mp4", "ep_number": None}]
+    assert group["episodes"] == [{"ep_number": "1", "title": "First"}]
+
+    response = await client.patch(f"/api/v1/animes/{anime.id}/episodes/{file.id}", json={"ep_number": "1"})
+    assert response.status_code == 200
+    assert (await client.get("/api/v1/unassigned-files")).json() == []
+
+
+@pytest.mark.asyncio
+async def test_media_scan_queues_every_active_folder(client, db_session, tmp_path, fake_state) -> None:
+    from app.db.repositories import FolderRepo
+
+    for name in ("a", "b"):
+        (tmp_path / name).mkdir()
+        await FolderRepo(db_session).create(str(tmp_path / name), "content", name)
+
+    response = await client.post("/api/v1/maintenance/media-scan")
+
+    assert response.status_code == 202
+    assert response.json() == {"folders": 2}
+    assert fake_state.job_queue.enqueue.call_count == 2

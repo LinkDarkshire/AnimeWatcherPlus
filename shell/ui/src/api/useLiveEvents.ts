@@ -80,6 +80,7 @@ export function useLiveEvents() {
           invalidate(
             // An identification can be the wished-for anime arriving.
             "wishlist",
+            "unassigned-files",
             "downloads-wanted",
             "animes",
             "review-queue",
@@ -91,6 +92,20 @@ export function useLiveEvents() {
             "missing-episodes",
             "missing-episodes-overview",
             "local-episodes",
+            "anime-pending-actions",
+          )
+          break
+        case "anime.episodes_changed":
+          // Files came, went or got an episode number.
+          invalidate(
+            "unassigned-files",
+            "missing-episodes",
+            "missing-episodes-overview",
+            "local-episodes",
+            "animes",
+            "rename-queue",
+            "pending-actions-count",
+            "downloads-wanted",
             "anime-pending-actions",
           )
           break
@@ -138,6 +153,7 @@ export function useLiveEvents() {
         case "anime.removed":
           invalidate(
             "wishlist",
+            "unassigned-files",
             "downloads-wanted",
             "animes",
             "review-queue",

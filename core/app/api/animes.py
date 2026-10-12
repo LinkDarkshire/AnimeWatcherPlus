@@ -424,6 +424,46 @@ async def get_anime_pending_actions(
     )
 
 
+class UnassignedFileOut(BaseModel):
+    episode_id: int
+    file_name: str
+    # The number read from the file name, if any -- set but not an episode
+    # AniDB lists (e.g. 13 for a 12-episode series), or None.
+    ep_number: str | None
+
+
+class EpisodeChoiceOut(BaseModel):
+    ep_number: str
+    title: str | None
+
+
+class UnassignedGroupOut(BaseModel):
+    anime_id: int
+    title: str
+    files: list[UnassignedFileOut]
+    episodes: list[EpisodeChoiceOut]
+
+
+@router.get("/unassigned-files", response_model=list[UnassignedGroupOut])
+async def list_unassigned_files(session: AsyncSession = Depends(get_db)) -> list[UnassignedGroupOut]:
+    """Video files that couldn't be matched to an episode, grouped by anime,
+    each with that anime's episode list to pick the right one from. Assigning
+    goes through PATCH /animes/{id}/episodes/{episode_id}."""
+    repo = CompletenessRepo(session)
+    groups: dict[int, UnassignedGroupOut] = {}
+    for episode, title in await repo.unassigned_files():
+        group = groups.setdefault(
+            episode.anime_id, UnassignedGroupOut(anime_id=episode.anime_id, title=title, files=[], episodes=[])
+        )
+        group.files.append(
+            UnassignedFileOut(episode_id=episode.id, file_name=Path(episode.file_path).name, ep_number=episode.ep_number)
+        )
+    choices = await repo.numbered_episodes(list(groups))
+    for anime_id, group in groups.items():
+        group.episodes = [EpisodeChoiceOut(ep_number=e.ep_number, title=e.title) for e in choices.get(anime_id, [])]
+    return list(groups.values())
+
+
 class IdentifyRequest(BaseModel):
     anidb_id: int
 

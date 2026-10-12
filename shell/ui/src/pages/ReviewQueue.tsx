@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { DuplicatesSection } from "@/components/DuplicatesSection"
 import { SortQueueSection } from "@/components/SortQueueSection"
 import { RenameQueueSection } from "@/components/RenameQueueSection"
+import { UnassignedFilesSection } from "@/components/UnassignedFilesSection"
 import { useT } from "@/i18n/I18nContext"
 
 export function ReviewQueue() {
@@ -91,6 +92,7 @@ export function ReviewQueue() {
         ))}
       </div>
 
+      <UnassignedFilesSection />
       <SortQueueSection />
       <RenameQueueSection />
       <DuplicatesSection />

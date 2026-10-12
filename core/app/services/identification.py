@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
+from app.db.completeness import CompletenessRepo
 from app.db.models import Anime
 from app.db.repositories import AnimeRepo, JobLogRepo, LocalEpisodeRepo
 from app.domain.metadata import AnimeMetadata
@@ -343,6 +344,8 @@ async def _finalize_identification(
     await sorter.maybe_auto_rename(session, event_bus, anime.id)
     # Last of all: episode NFOs have to name the files as they finally are,
     # so this must follow both the move and the rename.
+    # A lone file without a number is the only episode of a movie/one-shot.
+    await CompletenessRepo(session).assign_lone_file(anime_id)
     await _write_episode_nfos(session, anime_id, anidb_id)
 
     return anime

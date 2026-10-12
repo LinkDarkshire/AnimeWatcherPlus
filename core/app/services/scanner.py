@@ -11,11 +11,12 @@ from watchdog.observers import Observer
 from watchdog.observers.api import BaseObserver
 
 from app.config import Settings
+from app.db.completeness import CompletenessRepo
 from app.db.models import Folder
 from app.db.repositories import AnimeRepo, FolderRepo, LocalEpisodeRepo
 from app.db.session import session_scope
 from app.providers.base import ProviderRegistry
-from app.services import identification, pending_actions
+from app.services import identification
 from app.services.episode_parse import guess_episode_number, parse_release_filename
 from app.services.jobs import EventBus, JobQueue
 from app.services.media_files import (
@@ -381,15 +382,15 @@ class ScannerService:
                 if path_str not in seen_paths:
                     await episode_repo.delete_by_path(path_str)
                     episodes_changed = True
+            if await CompletenessRepo(session).assign_lone_file(anime.id):
+                episodes_changed = True
 
             should_identify = is_new or anime.ident_status == "pending"
 
         if episodes_changed:
-            # A new or removed episode file can add/clear a rename-queue entry
-            # for an anime that already exists, and unlike discovery or
-            # identification that publishes no event -- so the cached badge
-            # total has to be dropped here directly.
-            pending_actions.invalidate()
+            # Files came, went or got a number: missing episodes, unassigned
+            # files and the rename queue may all look different now.
+            await self._event_bus.publish("anime.episodes_changed", {"anime_id": anime.id})
 
         if should_identify:
             self._job_queue.enqueue(

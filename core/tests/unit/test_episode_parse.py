@@ -96,3 +96,39 @@ def test_a_title_starting_with_a_number_keeps_it() -> None:
 def test_an_explicit_episode_marker_beats_any_bare_number() -> None:
     assert guess_episode_number("Show 2019 Ep03.mkv") == "3"
     assert guess_episode_number("Show - E07 - Name.mkv") == "7"
+
+
+@pytest.mark.parametrize(
+    "filename,expected",
+    [
+        ("Energy Kyouka!! Vol.01 [ByJaSon].mp4", "1"),
+        ("Energy Kyouka!! Vol.02 [ByJaSon].mp4", "2"),
+        ("Show Vol 3.mkv", "3"),
+        ("Show Ep.04.mkv", "4"),
+        ("Show #05.mkv", "5"),
+        ("Show Folge 6.mkv", "6"),
+        ("Show Part2.mkv", "2"),
+        ("Show.Name.07.1080p.mkv", "7"),
+    ],
+)
+def test_more_episode_markers(filename: str, expected: str) -> None:
+    assert guess_episode_number(filename) == expected
+
+
+def test_marker_words_stay_out_of_the_title() -> None:
+    assert parse_release_filename("Energy Kyouka!! Vol.01 [ByJaSon].mp4").title == "Energy Kyouka!!"
+    assert parse_release_filename("Show Vol 3.mkv").title == "Show"
+
+
+@pytest.mark.parametrize(
+    "filename,expected",
+    [
+        ("cream_lemon_-_01v3_-_be_my_baby_(encoded_by_elgringo)[Lamonae]_[01971C30].avi", "1"),
+        ("[HentaiNI] Cele Kano [01][1080P] Uncensored.mkv", "1"),
+        ("[HentaiNI] Cele Kano [02][1080P] Uncensored.mkv", "2"),
+        ("Taimanin Asagi - Toraware no Niku Ningyou [2020][1080p-HEVC-WEBRip].mkv", None),
+        ("[Group] Show [1080p][ABCD1234].mkv", None),
+    ],
+)
+def test_version_suffix_and_bracketed_numbers(filename: str, expected: str | None) -> None:
+    assert guess_episode_number(filename) == expected
