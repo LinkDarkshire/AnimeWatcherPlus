@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from alembic import command
 from alembic.config import Config
 
+from alembic import command
 from app.config import get_settings
 
 CORE_DIR = Path(__file__).resolve().parents[2]
@@ -37,7 +37,8 @@ def test_alembic_upgrade_head_from_empty(tmp_path, monkeypatch) -> None:
     finally:
         conn.close()
 
-    for expected in ("folder", "anime", "tag", "anidb_title_index", "anime_search_fts"):
+    for expected in ("folder", "anime", "tag", "anidb_title_index", "anime_search_fts", "wishlist_entry",
+                     "download_integration", "download_request"):
         assert expected in tables
 
 
@@ -68,8 +69,8 @@ def test_migrated_anime_table_allows_duplicate_anidb_id(tmp_path, monkeypatch) -
         for path in ("/tmp/x/A", "/tmp/x/B"):
             conn.execute(
                 "INSERT INTO anime (folder_id, directory_path, anidb_id, title, alt_titles, "
-                "ident_status, missing_on_disk, created_at, is_duplicate) "
-                "VALUES (?, ?, 555, 'Same', '[]', 'identified', 0, datetime('now'), 0)",
+                "ident_status, created_at, is_duplicate) "
+                "VALUES (?, ?, 555, 'Same', '[]', 'identified', datetime('now'), 0)",
                 (folder_id, path),
             )
         conn.commit()
@@ -153,10 +154,35 @@ def test_migration_self_heals_a_db_stuck_with_the_old_unique_constraint(tmp_path
         # The constraint is actually gone now, not just "supposed to be".
         conn.execute(
             "INSERT INTO anime (id, folder_id, directory_path, anidb_id, title, alt_titles, "
-            "ident_status, missing_on_disk, created_at, is_duplicate) "
-            "VALUES (2, 1, '/x/B', 555, 'Show B', '[]', 'identified', 0, datetime('now'), 1)"
+            "ident_status, created_at, is_duplicate) "
+            "VALUES (2, 1, '/x/B', 555, 'Show B', '[]', 'identified', datetime('now'), 1)"
         )
         conn.commit()
         assert conn.execute("SELECT COUNT(*) FROM anime WHERE anidb_id = 555").fetchone()[0] == 2
     finally:
         conn.close()
+
+
+def test_upgrade_head_drops_missing_on_disk_column(tmp_path, monkeypatch) -> None:
+    """f95c78b912e0 removes the soft 'missing_on_disk' flag entirely -- a
+    previously-tracked anime whose folder vanishes is now deleted outright
+    instead of being flagged, so this column has no reader left."""
+    monkeypatch.setenv("AWP_DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+
+    cfg = Config(str(CORE_DIR / "alembic.ini"))
+    cfg.set_main_option("script_location", str(CORE_DIR / "alembic"))
+    try:
+        command.upgrade(cfg, "head")
+    finally:
+        get_settings.cache_clear()
+
+    import sqlite3
+
+    conn = sqlite3.connect(tmp_path / "library.db")
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(anime)").fetchall()}
+    finally:
+        conn.close()
+    assert "missing_on_disk" not in columns
+    assert "no_scan" in columns

@@ -6,7 +6,12 @@ import httpx
 import pytest
 import respx
 
-from app.services.artwork import ANIINFO_FILENAME, POSTER_FILENAME, download_poster, write_aniinfo_json
+from app.services.artwork import (
+    ANIINFO_FILENAME,
+    POSTER_FILENAME,
+    download_poster,
+    write_aniinfo_json,
+)
 
 
 @pytest.mark.asyncio

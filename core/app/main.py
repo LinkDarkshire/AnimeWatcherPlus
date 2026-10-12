@@ -6,22 +6,42 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import structlog
-from alembic import command
 from alembic.config import Config
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import animes, folders, settings_api, tags, ws
+from alembic import command
+from app.api import (
+    anidb,
+    animes,
+    downloads,
+    folders,
+    maintenance,
+    pending_actions,
+    rename_queue,
+    settings_api,
+    sort_queue,
+    tags,
+    wishlist,
+    ws,
+)
 from app.api.animes import review_router
 from app.api.errors import register_error_handlers
 from app.auth import require_token
 from app.config import get_settings
+from app.db.session import session_scope
+from app.downloads.registry import build_registry
 from app.logging_config import configure_logging
 from app.providers.anidb import AniDBProvider
+from app.providers.anidb_activity import anidb_status, waiting_counts
 from app.providers.base import ProviderRegistry
+from app.services import pending_actions as pending_actions_service
+from app.services import wishlist as wishlist_service
+from app.services.anidb_watch import AniDBBlockWatcher
 from app.services.jobs import EventBus, JobQueue
 from app.services.scanner import ScannerService
 from app.services.titledump import ensure_title_dump_imported
+from app.services.titles import run_startup_title_backfill
 from app.state import AppState
 
 # A PyInstaller --onefile build extracts itself (plus --add-data, i.e.
@@ -57,6 +77,9 @@ async def lifespan(app: FastAPI):
     configure_logging(settings)
 
     event_bus = EventBus()
+    # Must be wired before anything can publish: the nav badge's cached total
+    # goes stale the moment an anime is discovered/identified/sorted/removed.
+    pending_actions_service.register_invalidation(event_bus)
     job_queue = JobQueue(event_bus)
     provider_registry = ProviderRegistry()
     anidb_provider = AniDBProvider(settings)
@@ -70,21 +93,48 @@ async def lifespan(app: FastAPI):
         job_queue=job_queue,
         provider_registry=provider_registry,
         scanner=scanner,
+        # Plugin files are user code: a broken one is reported in the UI,
+        # never allowed to keep the core from starting.
+        download_plugins=await asyncio.to_thread(build_registry, settings.plugins_dir),
     )
 
     job_queue.start()
-    job_queue.enqueue("titledump_import", lambda: ensure_title_dump_imported(settings))
+    # Every change of the AniDB activity goes to the UI as a live event, so
+    # the header can show when a request is actually going out.
+    async def publish_anidb_activity() -> None:
+        status = anidb_status(anidb_provider, job_queue)
+        async with session_scope() as session:
+            status.update(await waiting_counts(session))
+        await event_bus.publish("anidb.activity", status)
+
+    anidb_provider.activity.subscribe(publish_anidb_activity)
+
+    job_queue.enqueue(
+        "titledump_import", lambda: ensure_title_dump_imported(settings, anidb_provider.activity)
+    )
+    # Before the scans and rescans: they read and write the same titles, and
+    # the rename queue must never be computed from the pre-variant ones.
+    job_queue.enqueue("title_backfill", lambda: run_startup_title_backfill(settings, event_bus))
     await scanner.start()
+    block_watcher = AniDBBlockWatcher(
+        anidb_provider,
+        resume=[
+            scanner.enqueue_pending_identifications,
+            lambda: wishlist_service.enqueue_pending_details(job_queue, provider_registry, event_bus),
+        ],
+    )
+    block_watcher.start()
     logger.info("core_started", data_dir=str(settings.data_dir))
 
     yield
 
+    await block_watcher.stop()
     await scanner.stop()
     await job_queue.stop()
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="AnimeWatcherPlus Core", version="0.1.1", lifespan=lifespan)
+    app = FastAPI(title="AnimeWatcherPlus Core", version="0.2.0", lifespan=lifespan)
 
     app.add_middleware(
         CORSMiddleware,
@@ -107,6 +157,13 @@ def create_app() -> FastAPI:
     app.include_router(review_router, dependencies=[protected])
     app.include_router(tags.router, dependencies=[protected])
     app.include_router(settings_api.router, dependencies=[protected])
+    app.include_router(sort_queue.router, dependencies=[protected])
+    app.include_router(rename_queue.router, dependencies=[protected])
+    app.include_router(pending_actions.router, dependencies=[protected])
+    app.include_router(maintenance.router, dependencies=[protected])
+    app.include_router(wishlist.router, dependencies=[protected])
+    app.include_router(downloads.router, dependencies=[protected])
+    app.include_router(anidb.router, dependencies=[protected])
     app.include_router(ws.router)
 
     return app

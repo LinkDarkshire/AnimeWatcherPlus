@@ -6,45 +6,78 @@
 
 # AnimeWatcherPlus
 
-Lokale Desktop-Anwendung zur Verwaltung einer Anime-Sammlung.
+Lokale Desktop-Anwendung zur Verwaltung einer Anime-Sammlung: erkennt Animes
+in deinen Ordnern über AniDB, zeigt fehlende Folgen, sortiert und benennt
+Downloads einheitlich und übergibt neue Folgen an deinen Download-Client.
 
-## Features (aktueller Stand)
+## Funktionen
 
-- **Ordnerverwaltung & Scanner:** Content-/Download-Ordner über die UI
-  verwalten, Startscan mit Diff-Cache (überspringt unveränderte Dateien) +
-  Live-Watch (watchdog) mit Debounce für laufende Downloads/Kopiervorgänge.
-- **Identifikation:** `tvshow.nfo`-Vorrang → lokaler AniDB-Titeldump
-  (FTS5 + rapidfuzz) → AniDB-HTTP-API mit Rate-Limiting/Backoff und
-  Ban-Erkennung (Sperre übersteht App-Neustarts, UI-Banner zeigt Restzeit) →
-  unsichere Treffer landen in der Review-Queue statt stiller Fehlzuordnung.
-  Duplikat-Erkennung, wenn dieselbe AniDB-ID in zwei Ordnern liegt (FA-29).
-- **Artwork & Metadaten:** Poster-Download in den Anime-Ordner, `tvshow.nfo`
-  (Jellyfin-kompatibel) sowie eine erweiterte `aniinfo.json` mit allen
-  AniDB-Rohdaten (Tags + Gewichtung, Episodenzahl erwartet/lokal, u.a.).
-- **Bibliotheks-UI:** virtualisiertes Grid, Volltextsuche/Filter (Jahr, Typ,
-  Tag), Detailansicht mit klickbaren Tags, Unidentifiziert-/Review-Liste mit
-  manueller AniDB-ID-Zuordnung (auch nachträglich änderbar), Ordner direkt im
-  Datei-Explorer öffnen.
-- **Einstellungen:** konfigurierbare Regel, ab welcher Zeit seit der letzten
-  Folge kein automatisches Metadaten-Rescan mehr versucht wird (Default 6
-  Monate, global abschaltbar), plus manueller Rescan pro Serie oder für die
-  ganze Bibliothek unter Ignorieren dieser Regel.
-- **Strukturiertes Logging:** rotierende JSON-Logdatei (`logs/core.log`,
-  10 MB × 5 Dateien) zusätzlich zur Konsolenausgabe — zum Beilegen bei
-  Problemen, unabhängig davon ob die Konsole gerade sichtbar war.
+- **Ordner & Scanner:** Content- und Download-Ordner in der App verwalten.
+  Beim Start ein Scan, der unveränderte Dateien überspringt, danach
+  Live-Überwachung. Änderungen werden erst verarbeitet, wenn ein Download
+  oder Kopiervorgang fertig ist. Netzlaufwerke, die erst später erreichbar
+  sind, werden automatisch nachgeholt.
+- **Erkennung über AniDB:** zuerst eine vorhandene `tvshow.nfo`, sonst ein
+  Abgleich des Ordnernamens mit der lokalen AniDB-Titelliste (wird alle 7
+  Tage aktualisiert). Unsichere Treffer landen zur Prüfung auf „Abfragen“,
+  statt geraten zu werden. Anfragen an AniDB sind gedrosselt, werden 7 Tage
+  zwischengespeichert und respektieren Sperren. Nach einer Sperre setzt die
+  App die liegengebliebenen Erkennungen automatisch fort.
+- **AniDB-Anzeige:** In der Kopfzeile siehst du live, was gerade bei AniDB
+  abgefragt wird, wie viele Aufträge offen sind und bis wann eine Sperre
+  oder das Tageslimit gilt.
+- **Artwork & Metadaten:** Poster, `tvshow.nfo` und Episoden-NFOs im
+  Jellyfin/Kodi-Format sowie eine `aniinfo.json` mit allen AniDB-Daten im
+  Anime-Ordner. Titel wahlweise englisch, romaji oder japanisch, für die
+  Anzeige und für Ordnernamen getrennt einstellbar.
+- **Bibliothek:** Raster mit Seiten (25/50/100 pro Seite), Volltextsuche,
+  Filter nach Status, Tag und fehlenden Folgen, Detailseite mit Episoden,
+  manuellen Episodennummern und Ordner-Öffnen-Knopf.
+- **Fehlende Folgen:** Vergleich der AniDB-Episodenliste mit den Dateien
+  auf der Platte, pro Serie und als Gesamtübersicht.
+- **Sortieren & Umbenennen:** Animes aus Download-Ordnern in den
+  Content-Ordner verschieben (in eine vorhandene Serie oder als neue),
+  Ordner und Dateien einheitlich benennen
+  (`Titel/Titel - S01E05 - Episodenname.mkv`). Untertitel und andere
+  Begleitdateien wandern mit. Auf Nachfrage oder automatisch.
+- **Duplikate:** dieselbe Serie in zwei Ordnern wird erkannt und zur
+  Entscheidung angezeigt.
+- **Wunschliste:** Animes, die du noch nicht hast, über die AniDB-Titelliste
+  suchen und vormerken. Sie erscheinen nicht in der Bibliothek, bis sie in
+  einem deiner Ordner auftauchen.
+- **Downloads:** fehlende Folgen und Wünsche an einen Download-Client
+  übergeben, mit Live-Fortschritt. Eingebaut: qBittorrent, Transmission und
+  JDownloader 2 (über MyJDownloader oder Folder Watch). Such-Quellen und
+  weitere Clients lassen sich als Plugins ergänzen (siehe unten).
+- **Wartung:** Reparatur-Scan, der Titel, Episodennummern und Metadaten aus
+  lokalen Daten wiederherstellt, ohne AniDB zu fragen.
+- **Logging:** rotierende JSON-Logdatei (`logs/core.log`, 10 MB × 5 Dateien)
+  zum Beilegen bei Problemen.
 - **Installer & Auto-Update:** signierter NSIS-Installer; die App prüft beim
-  Start gegen GitHub Releases und bietet Updates per Klick an (siehe
-  [Installer bauen](#installer-bauen-release)).
+  Start auf neue Versionen in den GitHub Releases. Unter Linux als AppImage,
+  das ohne Installation läuft.
 
-Offene Meilensteine aus dem technischen Konzept: fehlende Episoden (M5),
-Sprachanalyse (M6), Regel-Engine/Auto-Sort (M7), Download-Framework (M8),
-MAL-/TMDB-Provider (M9).
+## Neu in 0.2.0
+
+- Wunschliste, Download-Seite mit Plugins für Clients und Such-Quellen,
+  Live-Fortschritt der Downloads
+- qBittorrent-, Transmission- und MyJDownloader-Anbindung
+- AniDB-Aktivitätsanzeige und automatisches Fortsetzen nach einer Sperre
+- Bibliothek mit Seiten statt endlosem Scrollen, Seitengröße einstellbar
+- Sortieren/Umbenennen nimmt Untertitel und Begleitdateien mit und löscht
+  keine Dateien mehr, die nicht verschoben wurden
+- „Leerer Ordner“-Abfrage nur noch für wirklich leere Ordner
+- Fehlgeschlagene Aktionen werden als Meldung angezeigt
+- Linux: AppImage (`build_linux.sh`) und Startskript (`dev_start.sh`)
+- Releases für Windows und Linux werden automatisch auf GitHub gebaut
+- Zahlreiche Fehlerbehebungen (Titelsuche, Offline-Ordner, Speicherlecks,
+  Sicherheit der Desktop-Shell)
 
 ## Projektstruktur
 
 ```
-core/       Python/FastAPI-Backend (Sidecar)
-shell/      Tauri-Shell (Rust-Supervisor) + React-Frontend (shell/ui)
+core/       Python/FastAPI-Backend ("Core", läuft als Sidecar-Prozess)
+shell/      Tauri-Desktop-Shell (Rust) + React-Oberfläche (shell/ui)
 ```
 
 ## Voraussetzungen
@@ -52,6 +85,8 @@ shell/      Tauri-Shell (Rust-Supervisor) + React-Frontend (shell/ui)
 - Python 3.12+
 - Node.js 20+
 - Rust/Cargo + Tauri-CLI (`cargo install tauri-cli`) — nur für die Desktop-Shell
+
+Unter Linux reicht `distrobox`, siehe [Linux](#linux-starten-per-skript).
 
 ## Backend einrichten & starten
 
@@ -63,12 +98,12 @@ pip install -e ".[dev]"
 python -m uvicorn app.main:app --port 8000
 ```
 
-Migrationen (`alembic upgrade head`) laufen automatisch beim Start. App-Daten
-liegen unter `%APPDATA%/AnimeWatcherPlus` bzw. `~/.local/share/animewatcherplus`.
+Datenbank-Migrationen laufen automatisch beim Start. App-Daten liegen unter
+`%APPDATA%/AnimeWatcherPlus` bzw. `~/.local/share/AnimeWatcherPlus`.
 
-Tests: `python -m pytest` · Lint: `python -m ruff check app tests`
+Tests: `python -m pytest` · Lint: `ruff check app tests` · Typen: `mypy app --ignore-missing-imports`
 
-## Frontend einrichten & starten (Browser-Dev-Modus)
+## Frontend einrichten & starten (Browser-Modus)
 
 ```bash
 cd shell/ui
@@ -76,8 +111,8 @@ npm install
 npm run dev
 ```
 
-Erwartet den Core standardmäßig unter `http://127.0.0.1:8000` (siehe `.env`).
-Tests: `npm run test` · Typecheck: `npx tsc -b`
+Erwartet den Core unter `http://127.0.0.1:8000` (siehe `.env`).
+Tests: `npm run test` · Typecheck: `npx tsc -b` · Lint: `npm run lint`
 
 ## Desktop-Shell (Tauri)
 
@@ -86,74 +121,148 @@ cd shell
 cargo tauri dev
 ```
 
-Der Rust-Supervisor generiert ein Sitzungs-Token, startet den Core aus
-`core/.venv` auf einem freien Port und pollt `/health`, bevor das Fenster
-öffnet. Das Frontend fragt Port/Token per `get_connection_info`-Command ab.
-Das ist nur der Dev-Workflow — für einen installierbaren Build siehe unten.
+oder unter Windows einfach `dev_start.bat`. Die Shell erzeugt pro Sitzung
+ein Token, startet den Core aus `core/.venv` auf einem freien Port und
+öffnet das Fenster, sobald er antwortet. Das ist der Entwicklungsmodus — für
+einen installierbaren Build siehe unten.
 
-## Installer bauen (Release)
+## Linux: Starten per Skript
 
-Einmalig: Updater-Signierschlüssel erzeugen (bleibt außerhalb des Repos, wird
-nie committet):
+```bash
+./dev_start.sh            # Desktop-App (Tauri-Fenster)
+./dev_start.sh --browser  # nur Core + Oberfläche im Browser, ohne Tauri
+./dev_start.sh --setup    # nur einrichten/kompilieren, nicht starten
+```
+
+Das Gegenstück zu `dev_start.bat`. Alles läuft in einem Distrobox-Container
+(`awp-dev`, Fedora 44), weil Tauri unter Linux WebKitGTK-/GTK-Entwicklungs-
+pakete braucht, die sich auf unveränderlichen Systemen wie Bazzite oder
+Silverblue nicht auf dem Host installieren lassen. Das Fenster erscheint
+trotzdem normal auf dem Desktop. Der erste Start richtet Container,
+Python-Umgebung und npm-Pakete ein und kompiliert die Shell (einige Minuten),
+danach startet die App in Sekunden.
+
+Bleibt das Fenster leer, ist meist der DMA-BUF-Renderer von WebKitGTK
+schuld; das Skript schaltet ihn deshalb standardmäßig ab
+(`WEBKIT_DISABLE_DMABUF_RENDERER=1`).
+
+## Downloads & eigene Plugins
+
+Die Download-Seite listet bereits ausgestrahlte fehlende Folgen und
+Wunschlisten-Animes. Links werden an einen Download-Client übergeben, der in
+den Download-Ordner der App lädt; dort erkennt und sortiert die App die
+Dateien wie gewohnt. Wichtig: Läuft der Client in einem Container oder auf
+einem anderen Rechner, muss er in denselben Ordner speichern, den die App als
+Download-Ordner kennt. Den Pfad aus Sicht des Clients trägst du in dessen
+Einstellungen ein.
+
+Zwei Arten von Plugin-Klassen (Schnittstelle: `core/app/downloads/base.py`):
+
+- **`DownloadClient`** nimmt Links entgegen und meldet optional den
+  Fortschritt. Eingebaut: qBittorrent (Web-UI-API), Transmission (RPC) und
+  JDownloader 2 — über MyJDownloader (empfohlen, z. B. für JDownloader im
+  Container) oder über die Erweiterung „Folder Watch“.
+- **`SearchSource`** findet Links zu einer Folge oder Serie, wahlweise
+  zweistufig: erst die Serie suchen, dann die Varianten pro Folge (Sprache,
+  Format, Größe, Hoster).
+
+Eigene Plugins: eine `.py`-Datei pro Plugin in den Ordner `plugins` im
+App-Datenverzeichnis legen und die App neu starten. Die Einstellungen, die
+ein Plugin in `settings_schema` angibt, erscheinen automatisch als Formular
+auf der Download-Seite. Kommentierte Vorlagen in `core/plugin_examples/`:
+
+- `website_template.py` — Such-Quelle für eine Webseite; nur Adresse und
+  CSS-Pfade eintragen. Findet die Suche nichts, versucht sie es ohne „OVA“
+  und ähnliche Zusätze und zuletzt mit dem ersten Wort des Titels. Links
+  über Zwischenseiten (URL-Shortener) öffnet die App im Browser; den
+  endgültigen Link fügt man selbst ein.
+- `example_link_list.py` — Such-Quelle, die Links aus einer Textdatei liest.
+- `example_link_file_client.py` — Client, der Links in eine Datei schreibt.
+
+In der installierten Windows-Version können Plugins nur Bibliotheken nutzen,
+die in der App enthalten sind (u. a. `httpx` und `beautifulsoup4`).
+
+## Linux: AppImage
+
+Ein AppImage ist eine einzelne Datei, die ohne Installation auf praktisch
+jeder Distribution läuft – auch auf unveränderlichen Systemen wie Bazzite:
+
+```bash
+chmod +x AnimeWatcherPlus_*.AppImage
+./AnimeWatcherPlus_*.AppImage
+```
+
+Meldet das System, dass FUSE fehlt, startet es auch so:
+`./AnimeWatcherPlus_*.AppImage --appimage-extract-and-run`.
+
+Selbst bauen (im selben Distrobox-Container wie `dev_start.sh`):
+
+```bash
+./build_linux.sh
+```
+
+Ergebnis unter `shell/src-tauri/target/release/bundle/appimage/`. Ein lokal
+gebautes AppImage läuft auf Systemen, die mindestens so neu sind wie der
+Container (Fedora 44); das AppImage aus den GitHub Releases wird auf Ubuntu
+22.04 gebaut und läuft auch auf älteren Systemen.
+
+## Release erstellen
+
+Releases baut GitHub automatisch (`.github/workflows/release.yml`): den
+Windows-Installer und das Linux-AppImage, beide signiert für den
+Auto-Updater, zusammen mit der `latest.json`.
+
+Einmalig: den Updater-Signierschlüssel erzeugen (bleibt außerhalb des Repos)
+und seinen **Inhalt** auf GitHub unter *Settings → Secrets and variables →
+Actions* als `TAURI_SIGNING_PRIVATE_KEY` hinterlegen (hat der Schlüssel ein
+Passwort, zusätzlich `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`):
 
 ```bash
 cargo tauri signer generate -w "%USERPROFILE%\.awp-secrets\awp-updater.key" --ci
 ```
 
-Danach für jeden Release die folgenden drei Schritte (Core, Frontend, Shell
-sind unabhängig — hat sich z.B. nur das Backend geändert, reicht es, nur
-Schritt 1 erneut laufen zu lassen, bevor `cargo tauri build` in Schritt 3
-wieder alles zu einem neuen Installer zusammenpackt):
+Der öffentliche Schlüssel steht in `tauri.conf.json` (`plugins.updater.pubkey`)
+und muss dazu passen.
 
-**1. Python-Core per PyInstaller zu einer Onefile-Exe bauen** (Onefile, weil
-Alembic seine Migrationsskripte als echte Dateien zur Laufzeit braucht):
+Für jeden Release:
+
+1. Version in `tauri.conf.json`, `Cargo.toml`, `core/pyproject.toml`,
+   `core/app/main.py` und `shell/ui/package.json` anheben.
+2. Auf `main` einen Tag setzen und pushen:
+   ```bash
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+3. Der Workflow legt einen **Entwurf** unter *Releases* an. Prüfen und
+   veröffentlichen – erst dann bieten installierte Apps das Update an.
+
+### Windows-Installer von Hand bauen
+
+Falls nötig, geht es auch lokal unter Windows:
 
 ```bash
 cd core
+.venv\Scripts\python.exe -m pip install -e ".[build]"
 .venv\Scripts\python.exe -m PyInstaller core.spec --distpath ..\shell\src-tauri\binaries --noconfirm
 move /y ..\shell\src-tauri\binaries\core.exe ..\shell\src-tauri\binaries\core-x86_64-pc-windows-msvc.exe
-```
-
-`shell/src-tauri/binaries/` wird nie committet (siehe `.gitignore`).
-
-**2. Frontend bauen:**
-
-```bash
-cd shell/ui
+cd ..\shell\ui
 npm run build
-```
-
-**3. Signierten NSIS-Installer bauen:**
-
-```bash
-cd shell
+cd ..
 set TAURI_SIGNING_PRIVATE_KEY=%USERPROFILE%\.awp-secrets\awp-updater.key
 set CI=true
 cargo tauri build
 ```
 
-`CI=true` ist nötig, weil `cargo tauri build` beim Signieren sonst versucht,
-interaktiv nach einem Passwort für den Schlüssel zu fragen, und sich in einer
-nicht-interaktiven Shell aufhängt (bekannte Tauri-Eigenheit, auch bei einem
-passwortlos erzeugten Schlüssel) — mit `CI=true` wird das übersprungen.
+`CI=true` ist nötig, weil `cargo tauri build` beim Signieren sonst interaktiv
+nach einem Passwort fragt und hängen bleibt (auch bei einem Schlüssel ohne
+Passwort). Ergebnis unter `shell/src-tauri/target/release/bundle/nsis/`.
+`shell/src-tauri/binaries/` wird nie committet.
 
-Ergebnis landet unter `shell/src-tauri/target/release/bundle/nsis/`: der
-`.exe`-Installer und die dazugehörige `.exe.sig`-Signaturdatei.
+## Bekannte Einschränkungen
 
-Release-Upload zu GitHub ist ein manueller Schritt (kein `gh`-CLI auf dieser
-Maschine vorausgesetzt): den `.exe`-Installer, die `.exe.sig`-Datei und eine
-`latest.json` (Version, Notes, `pub_date`,
-`platforms.windows-x86_64.signature`/`.url`) als Release-Assets unter
-`github.com/LinkDarkshire/AnimeWatcherPlus/releases/new` hochladen. Die
-installierte App prüft `releases/latest/download/latest.json` automatisch
-beim Start und bietet ein Update per Klick an (signiert, stille Installation,
-Neustart).
-
-## Bekannte Lücken in diesem Stand
-
-- Kein CI-Build/Release (nur Lint+Test) — der Installer-Build läuft nur lokal,
-  manuell (siehe [Installer bauen](#installer-bauen-release)).
 - Kein Code-Signing-Zertifikat (Authenticode): Windows SmartScreen warnt bei
-  Erst-Install und bei jedem Auto-Update, das ist unabhängig vom
-  Updater-Signierschlüssel und nur mit einem kostenpflichtigen Zertifikat
-  vermeidbar.
+  der Erstinstallation und bei Updates. Das lässt sich nur mit einem
+  kostenpflichtigen Zertifikat vermeiden.
+- Specials, Credits und Trailer (bei AniDB `S1`, `C1`, …) werden beim
+  Sortieren und bei fehlenden Folgen nicht berücksichtigt; Dateien heißen
+  immer `S01`, da AniDB jede Staffel als eigenen Anime führt.

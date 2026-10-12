@@ -24,9 +24,6 @@ class MetadataProvider(ABC):
     @abstractmethod
     async def fetch(self, external_id: str) -> AnimeMetadata | None: ...
 
-    async def map_from_anidb(self, anidb_id: int) -> str | None:  # optional
-        return None
-
     async def get_full_info(self, external_id: str) -> dict | None:  # optional
         """Everything the provider knows about this anime, beyond the lean
         AnimeMetadata contract -- used for the aniinfo.json sidecar. Providers
@@ -36,12 +33,8 @@ class MetadataProvider(ABC):
 
 
 class RateLimiter:
-    """Enforces a minimum interval between calls plus a hard daily cap.
-
-    NFA-04: >=2s between AniDB HTTP requests, configurable daily ceiling. In-memory
-    only for this MVP pass (resets on process restart) — persisting the daily
-    counter across restarts is deferred to M9/M10 hardening.
-    """
+    """Enforces a minimum interval between calls plus a daily cap. The daily
+    counter lives in memory only, so it starts over when the app restarts."""
 
     def __init__(self, min_interval_s: float, daily_cap: int | None = None) -> None:
         self.min_interval_s = min_interval_s
@@ -50,6 +43,15 @@ class RateLimiter:
         self._lock = asyncio.Lock()
         self._call_day: str | None = None
         self._call_count = 0
+
+    def pending_wait(self) -> float:
+        """Seconds until the next call is allowed (for display; acquire()
+        is what actually enforces it)."""
+        return max(0.0, self.min_interval_s - (time.monotonic() - self._last_call))
+
+    @property
+    def calls_today(self) -> int:
+        return self._call_count if self._call_day == time.strftime("%Y-%m-%d") else 0
 
     async def acquire(self) -> None:
         async with self._lock:
@@ -69,9 +71,8 @@ class RateLimiter:
 
 
 class CircuitBreaker:
-    """After N failures, stays open for `cooldown_s` so a dead provider doesn't
-    stall the identification pipeline (Kap. 9.2).
-    """
+    """After `failure_threshold` failures in a row, stays open for
+    `cooldown_s`, so an unreachable provider doesn't stall identification."""
 
     def __init__(self, failure_threshold: int = 5, cooldown_s: float = 600.0) -> None:
         self.failure_threshold = failure_threshold
@@ -88,6 +89,12 @@ class CircuitBreaker:
             return False
         return True
 
+    def remaining_s(self) -> float:
+        """Seconds until the breaker closes again (0 when closed)."""
+        if not self.is_open() or self._opened_at is None:
+            return 0.0
+        return max(0.0, self.cooldown_s - (time.monotonic() - self._opened_at))
+
     def record_success(self) -> None:
         self._failures = 0
         self._opened_at = None
@@ -100,11 +107,9 @@ class CircuitBreaker:
 
 
 class ProviderRegistry:
-    """Holds the configurable Primär/Sekundär/Tertiär provider chain (FA-06).
-
-    Only AniDB is registered in this MVP pass; Jikan/TMDB (FA-25) plug into the
-    same chain in M9 without touching this class.
-    """
+    """The metadata providers in the order they're asked (primary first).
+    Currently only AniDB is registered; further providers plug into the same
+    chain."""
 
     def __init__(self) -> None:
         self._chain: list[MetadataProvider] = []

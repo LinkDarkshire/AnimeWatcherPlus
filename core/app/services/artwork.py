@@ -55,7 +55,7 @@ def write_aniinfo_json(
         "episode_count_local": episode_count_local,
         "ident_status": ident_status,
         "match_score": match_score,
-        "last_metadata_refresh": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "last_metadata_refresh": dt.datetime.now(dt.UTC).isoformat(),
     }
 
     anime_dir.mkdir(parents=True, exist_ok=True)

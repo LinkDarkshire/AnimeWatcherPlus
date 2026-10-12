@@ -10,7 +10,7 @@
 # directory would need.
 #
 # Build via: pyinstaller core.spec --distpath ../shell/src-tauri/binaries --noconfirm
-# (see build.bat in the repo root).
+# (see "Building the installer" in the README).
 
 block_cipher = None
 
@@ -32,6 +32,9 @@ a = Analysis(
         "uvicorn.protocols.websockets.auto",
         "uvicorn.lifespan.on",
         "aiosqlite",
+        # BeautifulSoup only imports its CSS selector engine when it's first
+        # needed; download plugins built on HtmlSiteSource rely on it.
+        "soupsieve",
     ],
     hookspath=[],
     hooksconfig={},

@@ -25,17 +25,17 @@ def test_normalize_folder_name(raw: str, expected: str) -> None:
 
 def _sample_dump_bytes() -> bytes:
     xml = (
-        '<?xml version="1.0" encoding="UTF-8"?>'
-        "<animetitles>"
-        '<anime aid="17222">'
-        '<title xml:lang="x-jat" type="main">Mushoku Tensei II</title>'
-        '<title xml:lang="en" type="official">Mushoku Tensei: Jobless Reincarnation Season 2</title>'
-        "</anime>"
-        '<anime aid="1">'
-        '<title xml:lang="x-jat" type="main">Fate Zero</title>'
-        "</anime>"
-        "</animetitles>"
-    ).encode("utf-8")
+        b'<?xml version="1.0" encoding="UTF-8"?>'
+        b"<animetitles>"
+        b'<anime aid="17222">'
+        b'<title xml:lang="x-jat" type="main">Mushoku Tensei II</title>'
+        b'<title xml:lang="en" type="official">Mushoku Tensei: Jobless Reincarnation Season 2</title>'
+        b"</anime>"
+        b'<anime aid="1">'
+        b'<title xml:lang="x-jat" type="main">Fate Zero</title>'
+        b"</anime>"
+        b"</animetitles>"
+    )
     return gzip.compress(xml)
 
 

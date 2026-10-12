@@ -11,6 +11,14 @@ export interface Folder {
 
 export type IdentStatus = "pending" | "identified" | "needs_manual_id" | "review"
 
+/** Expected vs. present episodes. null when the provider lists no numbered
+ * episodes for this entry (or it isn't identified yet). */
+export interface Completeness {
+  expected: number
+  present: number
+  missing: number
+}
+
 export interface AnimeListItem {
   id: number
   anidb_id: number | null
@@ -21,9 +29,9 @@ export interface AnimeListItem {
   ident_status: IdentStatus
   match_score: number | null
   episode_count_expected: number | null
-  missing_on_disk: boolean
   is_duplicate: boolean
   duplicate_of_anime_id: number | null
+  completeness: Completeness | null
 }
 
 export interface AnimeListResponse {
@@ -82,7 +90,319 @@ export interface ReviewItem {
   candidates: ReviewCandidate[] | null
 }
 
+export interface DuplicateEntry {
+  anime_id: number
+  title: string
+  directory_path: string
+  poster_path: string | null
+}
+
+export interface DuplicateGroup {
+  anidb_id: number
+  title: string
+  entries: DuplicateEntry[]
+}
+
 export interface WsEvent<T = unknown> {
   event: string
   data: T
+}
+
+export interface EmptyDirEntry {
+  folder_id: number
+  path: string
+}
+
+export interface SortQueueItem {
+  anime_id: number
+  title: string
+  directory_path: string
+  anidb_id: number
+  episode_count: number
+  matched_count: number
+  suggested_target_folder_id: number | null
+}
+
+export interface SortResolveResult {
+  moved: number
+  unmatched: number
+  target_anime_id: number
+}
+
+export interface RenameQueueItem {
+  anime_id: number
+  title: string
+  current_dir_name: string
+  target_dir_name: string
+  mismatched_file_count: number
+  total_matched_episodes: number
+}
+
+export interface RenameResolveResult {
+  renamed_dir: boolean
+  renamed_files: number
+}
+
+export interface PendingActionsCount {
+  total: number
+}
+
+export interface MissingEpisode {
+  ep_number: string
+  title: string | null
+  air_date: string | null
+}
+
+export interface MissingEpisodesResponse {
+  anime_id: number
+  expected: number
+  present: number
+  missing: MissingEpisode[]
+}
+
+export interface IncompleteAnime {
+  anime_id: number
+  title: string
+  poster_path: string | null
+  year: number | null
+  media_type: string | null
+  expected: number
+  present: number
+  missing: number
+}
+
+export interface MissingEpisodesOverview {
+  total: number
+  page: number
+  items: IncompleteAnime[]
+}
+
+export interface LocalEpisodeItem {
+  id: number
+  file_name: string
+  ep_number: string | null
+  manual_override: boolean
+}
+
+export interface FileRename {
+  current: string
+  target: string
+}
+
+export interface RenameProposal {
+  current_dir_name: string
+  target_dir_name: string
+  dir_needs_rename: boolean
+  file_renames: FileRename[]
+}
+
+export interface SortProposal {
+  episode_count: number
+  matched_count: number
+  suggested_target_folder_id: number | null
+}
+
+/** The open rename/sort proposals for one series. */
+export interface AnimePendingActions {
+  rename: RenameProposal | null
+  sort: SortProposal | null
+}
+
+/** What a repair scan changed across the whole library. */
+export interface RepairScanResult {
+  checked: number
+  titles_backfilled: number
+  titles_changed: number
+  episode_numbers_fixed: number
+  metadata_filled: number
+  expected_episodes_added: number
+  posters_relinked: number
+  without_local_source: number
+}
+
+/** An anime the user wants but doesn't have yet (never part of the library). */
+export interface WishlistItem {
+  id: number
+  anidb_id: number
+  title: string
+  year: number | null
+  media_type: string | null
+  episode_count: number | null
+  /** Year/type/episodes are still being fetched from AniDB (or the fetch failed). */
+  details_pending: boolean
+  /** Set once the anime has turned up in the library. */
+  library_anime_id: number | null
+  created_at: string
+}
+
+/** A title-dump search hit for adding to the wishlist. */
+export interface WishlistCandidate {
+  anidb_id: number
+  title: string
+  matched_title: string
+  score: number
+  in_library: boolean
+  on_wishlist: boolean
+}
+
+export type DownloadPluginKind = "client" | "source"
+
+export interface PluginSettingField {
+  key: string
+  label: string
+  type: "text" | "password" | "number" | "bool" | "path"
+  default: unknown
+  required: boolean
+  help: string | null
+}
+
+/** A download client or search source class (built in or from the plugins folder). */
+export interface DownloadPlugin {
+  id: string
+  kind: DownloadPluginKind
+  name: string
+  description: string
+  builtin: boolean
+  settings_schema: PluginSettingField[]
+}
+
+export interface DownloadPluginsResponse {
+  plugins: DownloadPlugin[]
+  load_errors: { file: string; error: string }[]
+  plugins_folder: string
+}
+
+/** A configured instance of a plugin. Stored passwords are never sent back;
+ * `secrets_set` only says which ones exist. */
+export interface DownloadIntegration {
+  id: number
+  plugin_id: string
+  /** null: the plugin it belongs to is no longer installed. */
+  kind: DownloadPluginKind | null
+  name: string
+  enabled: boolean
+  config: Record<string, unknown>
+  secrets_set: string[]
+}
+
+export interface DownloadRequestInfo {
+  requested_at: string
+  client_name: string
+}
+
+export interface WantedEpisode {
+  ep_number: string
+  title: string | null
+  air_date: string | null
+  last_request: DownloadRequestInfo | null
+}
+
+export interface WantedAnime {
+  anime_id: number
+  title: string
+  year: number | null
+  media_type: string | null
+  episodes: WantedEpisode[]
+}
+
+export interface WantedWishlistItem {
+  entry_id: number
+  anidb_id: number
+  title: string
+  year: number | null
+  media_type: string | null
+  episode_count: number | null
+  last_request: DownloadRequestInfo | null
+}
+
+export interface WantedResponse {
+  missing: WantedAnime[]
+  wishlist: WantedWishlistItem[]
+}
+
+/** What a search or a download is for. */
+export interface DownloadTarget {
+  anime_id?: number
+  wishlist_entry_id?: number
+  episode?: number
+}
+
+export interface DownloadSearchResult {
+  source_name: string
+  title: string
+  link: string
+  size_bytes: number | null
+  seeders: number | null
+  published: string | null
+  info_url: string | null
+  /** Hoster/mirror the link points to ("MEGA", ...). */
+  hoster: string | null
+  /** Stream links are only opened in the browser, never sent to a client. */
+  kind: "download" | "stream"
+  /** Label -> value ("Format" -> "MKV"); an empty label means "show the value alone". */
+  details: Record<string, string>
+  /** Leads through an intermediate page (URL shortener, ...): open it in the
+   * browser and paste the final link instead of sending this one. */
+  needs_browser: boolean
+}
+
+/** A series page of a two-stage source, still to be picked by the user. */
+export interface DownloadSeriesHit {
+  integration_id: number
+  source_name: string
+  title: string
+  url: string
+  extra: Record<string, unknown>
+}
+
+export interface DownloadSearchResponse {
+  results: DownloadSearchResult[]
+  series: DownloadSeriesHit[]
+  /** Source name -> error message, for sources that failed. */
+  errors: Record<string, string>
+  /** Source name -> information that isn't an error (e.g. which terms were tried). */
+  notes: Record<string, string>
+}
+
+export type DownloadState = "queued" | "downloading" | "paused" | "seeding" | "finished" | "error" | "unknown"
+
+export interface DownloadStatus {
+  state: DownloadState
+  /** 0..1 */
+  progress: number | null
+  speed_bps: number | null
+  eta_seconds: number | null
+  message: string | null
+}
+
+/** A download sent in the last two weeks, with live progress from its client. */
+export interface ActiveDownload {
+  request_id: number
+  title: string
+  client_name: string
+  requested_at: string
+  anime_id: number | null
+  wishlist_entry_id: number | null
+  status: DownloadStatus
+}
+
+/** What the core is doing with AniDB right now (pushed live as "anidb.activity"). */
+export interface AniDbStatus {
+  state: "idle" | "waiting" | "requesting"
+  /** What is being looked up, e.g. "Frieren (#17617)". */
+  detail: string | null
+  /** Seconds until the next request may go out (rate limit). */
+  wait_seconds: number | null
+  requests_today: number
+  daily_cap: number | null
+  banned_until: number | null
+  paused: boolean
+  /** Why no request can go out right now, and until when (epoch seconds). */
+  blocked_reason: "ban" | "daily_cap" | "paused" | null
+  blocked_until: number | null
+  /** When the work that failed during a block was queued again (epoch seconds). */
+  resumed_at: number | null
+  queued_jobs: number
+  waiting_anime: number
+  waiting_wishlist: number
 }

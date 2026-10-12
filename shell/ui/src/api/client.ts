@@ -20,6 +20,17 @@ export async function openFolder(path: string): Promise<void> {
   await invoke("open_folder", { path })
 }
 
+/** Opens a web page in the default browser (desktop shell) or a new tab
+ * (browser dev mode). Only http(s) addresses. */
+export async function openExternal(url: string): Promise<void> {
+  if (isTauri()) {
+    const { invoke } = await import("@tauri-apps/api/core")
+    await invoke("open_url", { url })
+  } else {
+    window.open(url, "_blank", "noopener,noreferrer")
+  }
+}
+
 let connectionPromise: Promise<Connection> | null = null
 
 async function resolveConnection(): Promise<Connection> {
@@ -86,6 +97,11 @@ export const api = {
     request<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined }),
   put: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "PUT", body: body ? JSON.stringify(body) : undefined }),
+  // Body is always serialized, unlike post/put: a PATCH legitimately sends
+  // `null` values (clearing a manual episode-number correction), and those
+  // must not be dropped by a truthiness check.
+  patch: <T>(path: string, body: unknown) =>
+    request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
 }
 

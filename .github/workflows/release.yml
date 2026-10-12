@@ -1,0 +1,88 @@
+name: Release
+
+# Builds the Windows installer and the Linux AppImage when a version tag is
+# pushed (e.g. `git tag v0.2.0 && git push origin v0.2.0`) and attaches both,
+# with their updater signatures and latest.json, to a draft GitHub release.
+# Check the draft, then publish it -- only published releases reach the
+# auto-updater.
+#
+# Needs the repository secret TAURI_SIGNING_PRIVATE_KEY (the content of the
+# updater key file) and, if the key has one, TAURI_SIGNING_PRIVATE_KEY_PASSWORD.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundles: nsis
+            core_built: core.exe
+            core_sidecar: core-x86_64-pc-windows-msvc.exe
+          # The oldest supported Ubuntu on purpose: an AppImage runs on systems
+          # with the same or a newer glibc than the one it was built on.
+          - os: ubuntu-22.04
+            bundles: appimage
+            core_built: core
+            core_sidecar: core-x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Bundle the Python core (PyInstaller)
+        working-directory: core
+        shell: bash
+        run: |
+          pip install -e ".[build]"
+          pyinstaller core.spec --distpath ../shell/src-tauri/binaries --noconfirm
+          mv ../shell/src-tauri/binaries/${{ matrix.core_built }} ../shell/src-tauri/binaries/${{ matrix.core_sidecar }}
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: shell/ui/package-lock.json
+
+      - name: Install UI dependencies
+        working-directory: shell/ui
+        run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: shell/src-tauri -> target
+
+      - name: Build and upload
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: shell
+          tauriScript: npx --yes @tauri-apps/cli@2
+          args: --bundles ${{ matrix.bundles }}
+          # __VERSION__ is the app version from tauri.conf.json.
+          tagName: v__VERSION__
+          releaseName: AnimeWatcherPlus v__VERSION__
+          releaseBody: "Windows: run the setup .exe. Linux: download the .AppImage, make it executable and start it. What's new: see the README."
+          releaseDraft: true
+          prerelease: false

@@ -41,6 +41,19 @@ async def db_session(test_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
         yield session
 
 
+@pytest.fixture(autouse=True)
+def _reset_pending_actions_cache():
+    """The pending-actions badge total is cached in a module-level global (one
+    Core process, one cache). Each test gets a fresh in-memory DB, so the
+    cache has to be cleared with it or a count carries over into the next
+    test."""
+    from app.services import pending_actions
+
+    pending_actions.invalidate()
+    yield
+    pending_actions.invalidate()
+
+
 @pytest.fixture
 def tmp_anime_dir(tmp_path):
     anime_dir = tmp_path / "Some Anime (2020)"

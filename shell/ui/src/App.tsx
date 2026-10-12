@@ -2,23 +2,35 @@ import { NavLink, Route, Routes } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { Library } from "@/pages/Library"
 import { AnimeDetail } from "@/pages/AnimeDetail"
+import { MissingEpisodes } from "@/pages/MissingEpisodes"
 import { Folders } from "@/pages/Folders"
 import { ReviewQueue } from "@/pages/ReviewQueue"
 import { Settings } from "@/pages/Settings"
+import { Wishlist } from "@/pages/Wishlist"
+import { Downloads } from "@/pages/Downloads"
 import { useLiveEvents } from "@/api/useLiveEvents"
+import { usePendingActionsCount } from "@/api/hooks"
+import { AniDbActivity } from "@/components/AniDbActivity"
 import { AniDbBanBanner } from "@/components/AniDbBanBanner"
-import { UpdateBanner } from "@/components/UpdateBanner"
+import { EmptyFolderPrompt } from "@/components/EmptyFolderPrompt"
+import { ErrorToasts } from "@/components/ErrorToasts"
+import { Badge } from "@/components/ui/badge"
 import { useT } from "@/i18n/I18nContext"
 
 function App() {
   useLiveEvents()
   const t = useT()
+  const { data: pendingActions } = usePendingActionsCount()
+  const pendingCount = pendingActions?.total ?? 0
 
   const NAV_ITEMS = [
-    { to: "/", label: t("nav.library"), end: true },
-    { to: "/review", label: t("nav.review") },
-    { to: "/folders", label: t("nav.folders") },
-    { to: "/settings", label: t("nav.settings") },
+    { to: "/", label: t("nav.library"), end: true, badge: 0 },
+    { to: "/missing-episodes", label: t("nav.missingEpisodes"), end: false, badge: 0 },
+    { to: "/wishlist", label: t("nav.wishlist"), end: false, badge: 0 },
+    { to: "/downloads", label: t("nav.downloads"), end: false, badge: 0 },
+    { to: "/review", label: t("nav.review"), end: false, badge: pendingCount },
+    { to: "/folders", label: t("nav.folders"), end: false, badge: 0 },
+    { to: "/settings", label: t("nav.settings"), end: false, badge: 0 },
   ]
 
   return (
@@ -33,7 +45,7 @@ function App() {
               end={item.end}
               className={({ isActive }) =>
                 cn(
-                  "rounded-md px-3 py-1.5 text-sm",
+                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm",
                   isActive
                     ? "bg-[hsl(var(--accent))] text-[hsl(var(--accent-foreground))]"
                     : "text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--accent))]",
@@ -41,21 +53,27 @@ function App() {
               }
             >
               {item.label}
+              {item.badge > 0 && <Badge variant="destructive">{item.badge}</Badge>}
             </NavLink>
           ))}
         </nav>
+        <AniDbActivity />
       </header>
-      <UpdateBanner />
       <AniDbBanBanner />
-      <main className="flex-1 overflow-hidden">
+      <EmptyFolderPrompt />
+      <main className="flex-1 overflow-y-auto">
         <Routes>
           <Route path="/" element={<Library />} />
           <Route path="/animes/:id" element={<AnimeDetail />} />
+          <Route path="/missing-episodes" element={<MissingEpisodes />} />
+          <Route path="/wishlist" element={<Wishlist />} />
+          <Route path="/downloads" element={<Downloads />} />
           <Route path="/review" element={<ReviewQueue />} />
           <Route path="/folders" element={<Folders />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
+      <ErrorToasts />
     </div>
   )
 }

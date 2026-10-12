@@ -30,10 +30,9 @@ def upgrade() -> None:
     Rebuilt with raw SQL rather than `batch_alter_table` (which reflects and
     silently carries forward the *existing* schema for anything it isn't
     told to change): the original `anidb_id` column has an unnamed inline
-    UNIQUE constraint from its old `unique=True` definition, and Alembic's
-    SQLite batch mode has no reliable way to detect/drop an anonymous
-    constraint like that. FA-29 requires *detecting* the same AniDB ID
-    reused across folders, not having the DB reject the second one.
+    UNIQUE constraint, and Alembic's SQLite batch mode can't reliably drop an
+    unnamed constraint. The same AniDB id in two folders must be allowed so
+    the app can mark it as a duplicate.
     """
     op.execute(
         """

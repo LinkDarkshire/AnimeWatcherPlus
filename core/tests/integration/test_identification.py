@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import gzip
 
 import pytest
@@ -7,7 +8,7 @@ import pytest_asyncio
 
 from app.config import Settings
 from app.db.repositories import AnimeRepo, FolderRepo
-from app.domain.metadata import AnimeMetadata, ProviderManifest, SearchHit, TagInfo
+from app.domain.metadata import AnimeMetadata, EpisodeInfo, ProviderManifest, SearchHit, TagInfo
 from app.providers.base import MetadataProvider, ProviderRegistry
 from app.services import identification
 from app.services.jobs import EventBus
@@ -105,10 +106,10 @@ async def test_identify_no_nfo_no_titledump_candidates_needs_manual_id(
 @pytest.mark.asyncio
 async def test_identify_confident_fuzzy_match(db_session, tmp_path, settings, folder_id) -> None:
     xml = (
-        '<?xml version="1.0" encoding="UTF-8"?><animetitles>'
-        '<anime aid="17222"><title xml:lang="en" type="official">Mushoku Tensei Season 2</title></anime>'
-        "</animetitles>"
-    ).encode("utf-8")
+        b'<?xml version="1.0" encoding="UTF-8"?><animetitles>'
+        b'<anime aid="17222"><title xml:lang="en" type="official">Mushoku Tensei Season 2</title></anime>'
+        b"</animetitles>"
+    )
     await import_title_dump(db_session, gzip.compress(xml))
 
     anime_dir = tmp_path / "Mushoku Tensei Season 2"
@@ -132,11 +133,11 @@ async def test_identify_ambiguous_fuzzy_match_goes_to_review(
     db_session, tmp_path, settings, folder_id
 ) -> None:
     xml = (
-        '<?xml version="1.0" encoding="UTF-8"?><animetitles>'
-        '<anime aid="1"><title xml:lang="en" type="official">Fate Zero</title></anime>'
-        '<anime aid="2"><title xml:lang="en" type="official">Fate Zero Two</title></anime>'
-        "</animetitles>"
-    ).encode("utf-8")
+        b'<?xml version="1.0" encoding="UTF-8"?><animetitles>'
+        b'<anime aid="1"><title xml:lang="en" type="official">Fate Zero</title></anime>'
+        b'<anime aid="2"><title xml:lang="en" type="official">Fate Zero Two</title></anime>'
+        b"</animetitles>"
+    )
     await import_title_dump(db_session, gzip.compress(xml))
 
     anime_dir = tmp_path / "Fate"
@@ -344,6 +345,219 @@ async def test_identify_falls_back_to_review_if_db_still_rejects_duplicate_anidb
 
 
 @pytest.mark.asyncio
+async def test_change_anidb_id_replaces_old_poster_with_new_one(
+    db_session, tmp_anime_dir, settings, folder_id
+) -> None:
+    """Regression test: re-identifying an already-identified anime with a
+    *different* AniDB ID (the duplicate-resolution "change ID" flow) used to
+    leave the old poster.jpg in place forever, because the poster-download
+    guard only checked "do we already have *a* poster", not "does it belong
+    to the anime we're now claiming this is".
+    """
+    import httpx
+    import respx
+
+    from app.services.artwork import POSTER_FILENAME
+
+    anime_repo = AnimeRepo(db_session)
+    anime = await anime_repo.create_pending(folder_id, str(tmp_anime_dir), tmp_anime_dir.name)
+
+    old_poster_url = "http://img7.anidb.net/pics/anime/old.jpg"
+    new_poster_url = "http://img7.anidb.net/pics/anime/new.jpg"
+    registry = _make_registry(
+        {"1": AnimeMetadata(external_id="1", title="Old Anime"), "2": AnimeMetadata(external_id="2", title="New Anime")},
+        {
+            "1": {"anidb_id": 1, "primary_title": "Old Anime", "poster_url": old_poster_url},
+            "2": {"anidb_id": 2, "primary_title": "New Anime", "poster_url": new_poster_url},
+        },
+    )
+    event_bus = EventBus()
+
+    with respx.mock:
+        respx.get(old_poster_url).mock(return_value=httpx.Response(200, content=b"old-poster-bytes"))
+        await identification.manual_identify(db_session, settings, anime, tmp_anime_dir, 1, registry, event_bus)
+    assert (tmp_anime_dir / POSTER_FILENAME).read_bytes() == b"old-poster-bytes"
+
+    anime = await anime_repo.get(anime.id)
+    with respx.mock:
+        respx.get(new_poster_url).mock(return_value=httpx.Response(200, content=b"new-poster-bytes"))
+        result = await identification.manual_identify(
+            db_session, settings, anime, tmp_anime_dir, 2, registry, event_bus
+        )
+
+    assert result.poster_path == POSTER_FILENAME
+    assert (tmp_anime_dir / POSTER_FILENAME).read_bytes() == b"new-poster-bytes"
+
+
+@pytest.mark.asyncio
+async def test_change_anidb_id_clears_old_poster_even_without_new_poster_url(
+    db_session, tmp_anime_dir, settings, folder_id
+) -> None:
+    """Regression test for the actual root cause: the old poster-cleanup used
+    to be nested inside `if poster_url and ...`, so if the *new* AniDB ID's
+    full_info simply has no poster_url (a real, unremarkable AniDB response
+    shape -- not every entry has art), the whole cleanup was skipped and the
+    stale poster.jpg + DB pointer from the old identity silently survived
+    the ID change. The old poster must be gone regardless of whether the new
+    identity has any poster of its own.
+    """
+    import httpx
+    import respx
+
+    from app.services.artwork import POSTER_FILENAME
+
+    anime_repo = AnimeRepo(db_session)
+    anime = await anime_repo.create_pending(folder_id, str(tmp_anime_dir), tmp_anime_dir.name)
+
+    old_poster_url = "http://img7.anidb.net/pics/anime/old.jpg"
+    registry = _make_registry(
+        {"1": AnimeMetadata(external_id="1", title="Old Anime"), "2": AnimeMetadata(external_id="2", title="New Anime")},
+        {
+            "1": {"anidb_id": 1, "primary_title": "Old Anime", "poster_url": old_poster_url},
+            "2": {"anidb_id": 2, "primary_title": "New Anime"},  # no poster_url at all
+        },
+    )
+    event_bus = EventBus()
+
+    with respx.mock:
+        respx.get(old_poster_url).mock(return_value=httpx.Response(200, content=b"old-poster-bytes"))
+        await identification.manual_identify(db_session, settings, anime, tmp_anime_dir, 1, registry, event_bus)
+    assert (tmp_anime_dir / POSTER_FILENAME).exists()
+
+    anime = await anime_repo.get(anime.id)
+    result = await identification.manual_identify(
+        db_session, settings, anime, tmp_anime_dir, 2, registry, event_bus
+    )
+
+    assert result.poster_path is None
+    assert not (tmp_anime_dir / POSTER_FILENAME).exists()
+
+
+@pytest.mark.asyncio
+async def test_change_anidb_id_clears_old_poster_even_if_full_info_fetch_fails(
+    db_session, tmp_anime_dir, settings, folder_id
+) -> None:
+    """Same bug, different trigger: get_full_info() itself returning None
+    for the new ID (transient provider error) used to skip the poster
+    cleanup entirely too, since it was nested even deeper than the
+    poster_url check."""
+    import httpx
+    import respx
+
+    from app.services.artwork import POSTER_FILENAME
+
+    anime_repo = AnimeRepo(db_session)
+    anime = await anime_repo.create_pending(folder_id, str(tmp_anime_dir), tmp_anime_dir.name)
+
+    old_poster_url = "http://img7.anidb.net/pics/anime/old.jpg"
+    registry = _make_registry(
+        {"1": AnimeMetadata(external_id="1", title="Old Anime"), "2": AnimeMetadata(external_id="2", title="New Anime")},
+        {"1": {"anidb_id": 1, "primary_title": "Old Anime", "poster_url": old_poster_url}},  # "2" absent -> None
+    )
+    event_bus = EventBus()
+
+    with respx.mock:
+        respx.get(old_poster_url).mock(return_value=httpx.Response(200, content=b"old-poster-bytes"))
+        await identification.manual_identify(db_session, settings, anime, tmp_anime_dir, 1, registry, event_bus)
+    assert (tmp_anime_dir / POSTER_FILENAME).exists()
+
+    anime = await anime_repo.get(anime.id)
+    result = await identification.manual_identify(
+        db_session, settings, anime, tmp_anime_dir, 2, registry, event_bus
+    )
+
+    assert result.poster_path is None
+    assert not (tmp_anime_dir / POSTER_FILENAME).exists()
+
+
+@pytest.mark.asyncio
+async def test_rescan_redownloads_poster_if_file_missing_despite_db_pointer(
+    db_session, tmp_anime_dir, settings, folder_id
+) -> None:
+    """Real-world case: poster_path was set from a previous identify, but the
+    physical poster.jpg is gone from the anime's current directory -- e.g.
+    the folder was reorganized by hand or by an external tool outside the
+    app's own move/rename machinery, leaving the file behind at wherever it
+    used to live. Since the DB still has a non-null poster_path, the old
+    `poster_saved = bool(anime.poster_path)` check would never notice and
+    would skip re-downloading forever, on every single rescan -- even though
+    the AniDB ID itself never changed. Checking the file's actual presence
+    makes this self-healing on the very next identify.
+    """
+    import httpx
+    import respx
+
+    from app.services.artwork import POSTER_FILENAME
+
+    anime_repo = AnimeRepo(db_session)
+    anime = await anime_repo.create_pending(folder_id, str(tmp_anime_dir), tmp_anime_dir.name)
+
+    poster_url = "http://img7.anidb.net/pics/anime/999.jpg"
+    registry = _make_registry(
+        {"42": AnimeMetadata(external_id="42", title="Test Anime")},
+        {"42": {"anidb_id": 42, "primary_title": "Test Anime", "poster_url": poster_url}},
+    )
+    event_bus = EventBus()
+
+    with respx.mock:
+        respx.get(poster_url).mock(return_value=httpx.Response(200, content=b"first-download"))
+        await identification.manual_identify(db_session, settings, anime, tmp_anime_dir, 42, registry, event_bus)
+    assert (tmp_anime_dir / POSTER_FILENAME).exists()
+
+    # Simulate the desync: DB still points at poster.jpg, but the file is
+    # gone from the anime's current directory (external move/reorg/deletion).
+    (tmp_anime_dir / POSTER_FILENAME).unlink()
+
+    anime = await anime_repo.get(anime.id)
+    with respx.mock:
+        respx.get(poster_url).mock(return_value=httpx.Response(200, content=b"redownloaded"))
+        result = await identification.manual_identify(
+            db_session, settings, anime, tmp_anime_dir, 42, registry, event_bus
+        )
+
+    assert result.poster_path == POSTER_FILENAME
+    assert (tmp_anime_dir / POSTER_FILENAME).read_bytes() == b"redownloaded"
+
+
+@pytest.mark.asyncio
+async def test_change_anidb_id_fixes_up_duplicate_flags_on_both_old_and_new_group(
+    db_session, tmp_path, settings, folder_id
+) -> None:
+    """Anime B was flagged as a duplicate of Anime A (both on aid=555). If B
+    turns out to be a misidentification and gets manually reassigned to a
+    different aid, A must no longer be shown as having a duplicate (nothing
+    else shares 555 anymore), and B must not carry over a stale
+    duplicate_of_anime_id pointing at A.
+    """
+    anime_repo = AnimeRepo(db_session)
+    dir_a = tmp_path / "Show Copy A"
+    dir_a.mkdir()
+    dir_b = tmp_path / "Show Copy B"
+    dir_b.mkdir()
+    anime_a = await anime_repo.create_pending(folder_id, str(dir_a), dir_a.name)
+    anime_b = await anime_repo.create_pending(folder_id, str(dir_b), dir_b.name)
+
+    metadata_555 = AnimeMetadata(external_id="555", title="Same Anime")
+    metadata_other = AnimeMetadata(external_id="900", title="Actually Different Anime")
+    registry = _make_registry({"555": metadata_555, "900": metadata_other})
+    event_bus = EventBus()
+
+    await identification.manual_identify(db_session, settings, anime_a, dir_a, 555, registry, event_bus)
+    await identification.manual_identify(db_session, settings, anime_b, dir_b, 555, registry, event_bus)
+    reloaded_b = await anime_repo.get(anime_b.id)
+    assert reloaded_b.is_duplicate is True
+
+    result_b = await identification.manual_identify(
+        db_session, settings, reloaded_b, dir_b, 900, registry, event_bus
+    )
+
+    assert result_b.is_duplicate is False
+    assert result_b.duplicate_of_anime_id is None
+    reloaded_a = await anime_repo.get(anime_a.id)
+    assert reloaded_a.is_duplicate is False
+
+
+@pytest.mark.asyncio
 async def test_identify_syncs_renamed_anidb_tag_instead_of_crashing(
     db_session, tmp_anime_dir, settings, folder_id
 ) -> None:
@@ -388,3 +602,170 @@ async def test_identify_syncs_renamed_anidb_tag_instead_of_crashing(
     tags = (await db_session.execute(select(Tag).where(Tag.anidb_tag_id == 2702))).scalars().all()
     assert len(tags) == 1
     assert tags[0].name == "boobjob"
+
+
+@pytest.mark.asyncio
+async def test_identify_persists_episode_air_dates(
+    db_session, tmp_anime_dir, settings, folder_id
+) -> None:
+    """Regression test: the (ep_number, title) tuple apply_identification
+    used to build ExpectedEpisode rows from silently dropped the air date
+    AniDB actually provides -- every episode ended up with air_date=None in
+    the database no matter what, which meant is_stale()/the no_scan rule
+    could never fire for anyone.
+    """
+    anime_repo = AnimeRepo(db_session)
+    anime = await anime_repo.create_pending(folder_id, str(tmp_anime_dir), tmp_anime_dir.name)
+
+    metadata = AnimeMetadata(
+        external_id="123",
+        title="Dated Anime",
+        episodes=[
+            EpisodeInfo(ep_number="1", air_date="2019-04-07"),
+            EpisodeInfo(ep_number="2", air_date="2019-04-14"),
+            EpisodeInfo(ep_number="3", air_date=None),
+        ],
+    )
+    registry = _make_registry({"123": metadata})
+    event_bus = EventBus()
+
+    result = await identification.manual_identify(
+        db_session, settings, anime, tmp_anime_dir, 123, registry, event_bus
+    )
+
+    reloaded = await anime_repo.get(result.id)
+    air_dates = {ep.ep_number: ep.air_date for ep in reloaded.expected_episodes}
+    assert air_dates == {
+        "1": dt.date(2019, 4, 7),
+        "2": dt.date(2019, 4, 14),
+        "3": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_manual_identify_flags_no_scan_when_clearly_stale(
+    db_session, tmp_anime_dir, settings, folder_id
+) -> None:
+    """The no_scan verdict must be persisted immediately after identification
+    itself -- not just discovered later by the scanner's startup sweep --
+    so a manual identify/rescan keeps it current right away.
+    """
+    anime_repo = AnimeRepo(db_session)
+    anime = await anime_repo.create_pending(folder_id, str(tmp_anime_dir), tmp_anime_dir.name)
+
+    long_ago = (dt.date.today() - dt.timedelta(days=1000)).isoformat()
+    metadata = AnimeMetadata(
+        external_id="200", title="Long Finished Anime", episodes=[EpisodeInfo(ep_number="1", air_date=long_ago)]
+    )
+    registry = _make_registry({"200": metadata})
+    event_bus = EventBus()
+
+    result = await identification.manual_identify(
+        db_session, settings, anime, tmp_anime_dir, 200, registry, event_bus
+    )
+
+    assert result.no_scan is True
+
+
+@pytest.mark.asyncio
+async def test_manual_identify_does_not_flag_no_scan_when_recent(
+    db_session, tmp_anime_dir, settings, folder_id
+) -> None:
+    anime_repo = AnimeRepo(db_session)
+    anime = await anime_repo.create_pending(folder_id, str(tmp_anime_dir), tmp_anime_dir.name)
+
+    metadata = AnimeMetadata(
+        external_id="201",
+        title="Ongoing Anime",
+        episodes=[EpisodeInfo(ep_number="1", air_date=dt.date.today().isoformat())],
+    )
+    registry = _make_registry({"201": metadata})
+    event_bus = EventBus()
+
+    result = await identification.manual_identify(
+        db_session, settings, anime, tmp_anime_dir, 201, registry, event_bus
+    )
+
+    assert result.no_scan is False
+
+
+@pytest.mark.asyncio
+async def test_reidentify_clears_no_scan_when_new_id_has_recent_episode(
+    db_session, tmp_anime_dir, settings, folder_id
+) -> None:
+    """Changing a misidentified anime's AniDB ID (the duplicate-resolution
+    flow) must re-evaluate no_scan against the *new* identity, not leave it
+    stuck flagged from the old one.
+    """
+    anime_repo = AnimeRepo(db_session)
+    anime = await anime_repo.create_pending(folder_id, str(tmp_anime_dir), tmp_anime_dir.name)
+
+    long_ago = (dt.date.today() - dt.timedelta(days=1000)).isoformat()
+    registry = _make_registry(
+        {
+            "300": AnimeMetadata(
+                external_id="300", title="Old Wrong Anime", episodes=[EpisodeInfo(ep_number="1", air_date=long_ago)]
+            ),
+            "301": AnimeMetadata(
+                external_id="301",
+                title="Actually This One",
+                episodes=[EpisodeInfo(ep_number="1", air_date=dt.date.today().isoformat())],
+            ),
+        }
+    )
+    event_bus = EventBus()
+
+    first = await identification.manual_identify(
+        db_session, settings, anime, tmp_anime_dir, 300, registry, event_bus
+    )
+    assert first.no_scan is True
+
+    reloaded = await anime_repo.get(first.id)
+    second = await identification.manual_identify(
+        db_session, settings, reloaded, tmp_anime_dir, 301, registry, event_bus
+    )
+    assert second.no_scan is False
+
+
+@pytest.mark.asyncio
+async def test_same_id_rescan_does_not_clear_no_scan_even_with_fresher_episode(
+    db_session, tmp_anime_dir, settings, folder_id
+) -> None:
+    """Asymmetric no_scan semantics per user request: a same-ID refresh
+    (e.g. Force Full Scan re-checking a no_scan anime, or the per-anime
+    "Rescan" button) must never silently un-flag it on its own, even if
+    AniDB's fresh data would otherwise look "not stale" -- only reassigning
+    the AniDB ID may do that. Setting the flag (newly becoming stale)
+    still happens on any refresh; only *clearing* it is restricted.
+    """
+    anime_repo = AnimeRepo(db_session)
+    anime = await anime_repo.create_pending(folder_id, str(tmp_anime_dir), tmp_anime_dir.name)
+
+    long_ago = (dt.date.today() - dt.timedelta(days=1000)).isoformat()
+    provider = FakeAniDBProvider(
+        {
+            "400": AnimeMetadata(
+                external_id="400", title="Show", episodes=[EpisodeInfo(ep_number="1", air_date=long_ago)]
+            )
+        }
+    )
+    registry = ProviderRegistry()
+    registry.register(provider)
+    event_bus = EventBus()
+
+    first = await identification.manual_identify(
+        db_session, settings, anime, tmp_anime_dir, 400, registry, event_bus
+    )
+    assert first.no_scan is True
+
+    # Same AniDB ID, but AniDB now claims a brand new episode -- simulating
+    # a routine re-check (e.g. Force Full Scan) discovering fresher data.
+    provider._responses["400"] = AnimeMetadata(
+        external_id="400", title="Show", episodes=[EpisodeInfo(ep_number="1", air_date=dt.date.today().isoformat())]
+    )
+    reloaded = await anime_repo.get(first.id)
+    second = await identification.manual_identify(
+        db_session, settings, reloaded, tmp_anime_dir, 400, registry, event_bus
+    )
+
+    assert second.no_scan is True  # unchanged -- same ID, no auto-clear

@@ -36,3 +36,8 @@ Thumbs.db
 
 # Miscellaneous
 AnimeWatcherPlus_Technisches_Konzept.md
+
+# Runtime output from real installs -- never commit (contains local paths
+# and library contents)
+*.log
+/aniinfo.json

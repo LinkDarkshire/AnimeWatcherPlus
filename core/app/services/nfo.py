@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -7,7 +8,8 @@ TVSHOW_NFO = "tvshow.nfo"
 
 
 def read_anidb_id_from_nfo(anime_dir: Path) -> int | None:
-    """FA-04: if tvshow.nfo has <uniqueid type="anidb">, use it directly (no fuzzy lookup)."""
+    """The AniDB id from an existing tvshow.nfo (<uniqueid type="anidb">), if
+    there is one -- then no title matching is needed at all."""
     nfo_path = anime_dir / TVSHOW_NFO
     if not nfo_path.exists():
         return None
@@ -33,9 +35,8 @@ def write_tvshow_nfo(
     tags: list[str],
     has_local_poster: bool = False,
 ) -> Path:
-    """Writes/merges tvshow.nfo in Jellyfin/Kodi schema (FA-09). Merge-safe: foreign
-    elements the app doesn't own are preserved; only the fields we manage are replaced.
-    """
+    """Writes tvshow.nfo in the Jellyfin/Kodi format. An existing file is
+    updated, not replaced: elements the app doesn't manage are kept."""
     nfo_path = anime_dir / TVSHOW_NFO
     if nfo_path.exists():
         try:
@@ -88,7 +89,16 @@ def write_tvshow_nfo(
 
 def write_episode_nfo(
     episode_file: Path, *, title: str | None, ep_number: str, anidb_id: int
-) -> Path:
+) -> bool:
+    """Writes the per-episode `.nfo` next to the video file. Returns True if
+    the file was actually written.
+
+    Unlike tvshow.nfo there is one of these per episode, so a library-wide
+    metadata refresh would otherwise mean tens of thousands of small writes
+    over a network share on every pass. The content is rendered first and
+    compared against what's already there, turning an unchanged library into
+    reads only.
+    """
     nfo_path = episode_file.with_suffix(".nfo")
     root = ET.Element("episodedetails")
     _set_child_text(root, "title", title or f"Episode {ep_number}")
@@ -98,8 +108,19 @@ def write_episode_nfo(
     uid_el.text = str(anidb_id)
     tree = ET.ElementTree(root)
     ET.indent(tree, space="  ")
-    tree.write(nfo_path, encoding="utf-8", xml_declaration=True)
-    return nfo_path
+
+    buffer = BytesIO()
+    tree.write(buffer, encoding="utf-8", xml_declaration=True)
+    rendered = buffer.getvalue()
+
+    try:
+        if nfo_path.read_bytes() == rendered:
+            return False
+    except OSError:
+        pass  # missing or unreadable -> write it
+
+    nfo_path.write_bytes(rendered)
+    return True
 
 
 def _set_child_text(root: ET.Element, tag: str, text: str) -> None:

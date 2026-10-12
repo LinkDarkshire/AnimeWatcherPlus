@@ -10,12 +10,11 @@ use tauri::{Manager, RunEvent, State};
 #[cfg(debug_assertions)]
 use std::path::PathBuf;
 
-/// Sidecar supervisor (Kap. 4.3 / 8): generates a per-session bearer token,
-/// spawns the Python core with a random free port, waits for `/health`, and
-/// exposes the connection info to the frontend. In debug builds this
-/// launches `core/.venv`'s interpreter directly (the dev workflow); in
-/// release builds it spawns the PyInstaller-bundled `externalBin` sidecar
-/// via tauri-plugin-shell instead (see build.bat / core/core.spec).
+/// Starts and supervises the Python core: generates a per-session bearer
+/// token, starts the core on a random free port, waits for `/health`, and
+/// hands port and token to the frontend. Debug builds run the core with
+/// `core/.venv`'s Python; release builds start the bundled PyInstaller
+/// executable (see core/core.spec).
 enum CoreChild {
     Dev(std::process::Child),
     Sidecar(tauri_plugin_shell::process::CommandChild),
@@ -51,7 +50,7 @@ fn find_free_port() -> u16 {
 }
 
 fn generate_token() -> String {
-    let mut bytes = [0u8; 32]; // 256-bit token (Kap. 8)
+    let mut bytes = [0u8; 32]; // 256-bit random token
     rand::thread_rng().fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
@@ -135,8 +134,15 @@ fn get_connection_info(state: State<ConnectionInfo>) -> ConnectionInfo {
 /// Reveals an anime's directory in the OS's native file manager, so a
 /// misidentified/duplicate entry can be inspected or fixed by hand without
 /// re-typing its (often long, network-share) path.
+///
+/// Only ever opens an existing *directory*: on Windows `explorer <file>`
+/// launches the file with its associated program, so passing anything else
+/// through would turn this command into "run any executable".
 #[tauri::command]
 fn open_folder(path: String) -> Result<(), String> {
+    if !std::path::Path::new(&path).is_dir() {
+        return Err(format!("not a directory: {path}"));
+    }
     let result = if cfg!(target_os = "windows") {
         Command::new("explorer").arg(&path).spawn()
     } else if cfg!(target_os = "macos") {
@@ -147,13 +153,40 @@ fn open_folder(path: String) -> Result<(), String> {
     result.map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// Opens a web page in the user's default browser -- for download links that
+/// lead through an intermediate page (URL shortener, captcha) the user has to
+/// click through by hand. Only http(s): anything else could start a local
+/// program through the OS's URL handlers.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    let lowered = url.to_ascii_lowercase();
+    if !(lowered.starts_with("http://") || lowered.starts_with("https://")) {
+        return Err(format!("not a web address: {url}"));
+    }
+    let result = if cfg!(target_os = "windows") {
+        Command::new("explorer").arg(&url).spawn()
+    } else if cfg!(target_os = "macos") {
+        Command::new("open").arg(&url).spawn()
+    } else {
+        Command::new("xdg-open").arg(&url).spawn()
+    };
+    result.map(|_| ()).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // WebKitGTK's DMA-BUF renderer shows a blank window with many GPU drivers
+    // (NVIDIA in particular). Turned off unless the user decides otherwise.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .invoke_handler(tauri::generate_handler![get_connection_info, open_folder])
+        .invoke_handler(tauri::generate_handler![get_connection_info, open_folder, open_url])
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -163,10 +196,8 @@ pub fn run() {
                 )?;
             }
 
-            // Spawning the core here (rather than before the builder exists,
-            // as before) is what the release path requires: resolving the
-            // bundled sidecar binary via tauri-plugin-shell needs a live
-            // AppHandle, which only exists once the app is being built.
+            // The core is started here because locating the bundled sidecar
+            // binary needs the AppHandle, which only exists from this point.
             let port = find_free_port();
             let token = generate_token();
             let child = spawn_core(app.handle(), port, &token);

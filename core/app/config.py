@@ -36,8 +36,8 @@ class Settings(BaseSettings):
 
     scan_debounce_interval_s: float = 2.0
     scan_debounce_checks: int = 2
-    # Pause between anime directories during the background full-scan so it
-    # stays "gemächlich" and never competes with interactive API requests.
+    # Short pause between anime directories during a background full scan,
+    # so the scan never slows down the UI's own requests.
     scan_yield_interval_s: float = 0.1
 
     @property
@@ -45,19 +45,16 @@ class Settings(BaseSettings):
         return self.data_dir / "library.db"
 
     @property
-    def covers_dir(self) -> Path:
-        return self.data_dir / "covers"
-
-    @property
     def logs_dir(self) -> Path:
         return self.data_dir / "logs"
 
     @property
-    def titledump_path(self) -> Path:
-        return self.data_dir / "anime-titles.xml.gz"
+    def plugins_dir(self) -> Path:
+        """User-supplied download plugins (one .py file per plugin)."""
+        return self.data_dir / "plugins"
 
     def ensure_dirs(self) -> None:
-        for d in (self.data_dir, self.covers_dir, self.logs_dir):
+        for d in (self.data_dir, self.logs_dir):
             d.mkdir(parents=True, exist_ok=True)
 
 

@@ -6,7 +6,8 @@ from app.config import get_settings
 
 
 async def require_token(authorization: str | None = Header(default=None)) -> None:
-    """Bearer-token dependency guarding every API route (Kap. 8: loopback-only + token)."""
+    """Checks the bearer token on every API route. The core only listens on
+    127.0.0.1, and the desktop shell hands the per-session token to the UI."""
     settings = get_settings()
     if not settings.sidecar_token:
         # No token configured (e.g. first dev run without the Tauri supervisor) -> open.

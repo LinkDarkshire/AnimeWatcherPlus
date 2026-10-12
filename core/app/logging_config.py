@@ -8,18 +8,15 @@ import structlog
 from app.config import Settings
 
 LOG_FILENAME = "core.log"
-LOG_MAX_BYTES = 10 * 1024 * 1024  # Kap. 9.1: 10 MB x 5 Dateien
+LOG_MAX_BYTES = 10 * 1024 * 1024  # rotate at 10 MB, keep 5 old files
 LOG_BACKUP_COUNT = 5
 
 
 def configure_logging(settings: Settings) -> None:
-    """Structured logging (Kap. 9.1): a rotating JSON file under the app's
-    own data directory (`logs/core.log`), plus a human-readable console
-    stream. The file exists specifically so a problem can be diagnosed after
-    the fact -- copy its contents (or the tail of it) into a bug report --
-    without having needed to be watching a console at the exact moment
-    something went wrong, which `cargo tauri dev` often doesn't show anyway.
-    """
+    """Structured logging: a rotating JSON file in the app's data directory
+    (`logs/core.log`) plus readable console output. The file is there so a
+    problem can be looked into afterwards -- e.g. by attaching its tail to a
+    bug report -- without having had a console open at the time."""
     settings.logs_dir.mkdir(parents=True, exist_ok=True)
     log_path = settings.logs_dir / LOG_FILENAME
 

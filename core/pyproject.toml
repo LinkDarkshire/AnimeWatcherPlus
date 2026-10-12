@@ -1,6 +1,6 @@
 [project]
 name = "animewatcherplus-core"
-version = "0.1.1"
+version = "0.2.0"
 description = "AnimeWatcherPlus NG backend core"
 requires-python = ">=3.12"
 dependencies = [
@@ -8,7 +8,7 @@ dependencies = [
     "uvicorn[standard]>=0.34",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
-    "sqlalchemy>=2.0.36",
+    "sqlalchemy[asyncio]>=2.0.36",
     "aiosqlite>=0.20",
     "alembic>=1.14",
     "watchdog>=6.0",
@@ -16,6 +16,8 @@ dependencies = [
     "rapidfuzz>=3.10",
     "structlog>=24.4",
     "anyio>=4.6",
+    "cryptography>=42",  # MyJDownloader API encryption (AES-CBC)
+    "beautifulsoup4>=4.12",  # HTML parsing for search-source plugins (HtmlSiteSource)
 ]
 
 [project.optional-dependencies]
@@ -36,6 +38,18 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
+
+# An explicit rule set, so a new ruff release (CI installs the latest)
+# can't suddenly turn the lint step red with rules nobody chose.
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "W", "I", "UP", "B", "ASYNC", "RUF"]
+# Single stat()/mkdir() calls in async code are fine here; the scans that
+# walk whole directory trees already run in a worker thread.
+ignore = ["ASYNC240"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency markers are meant to be used as default values.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header"]
 
 [build-system]
 requires = ["setuptools>=68"]

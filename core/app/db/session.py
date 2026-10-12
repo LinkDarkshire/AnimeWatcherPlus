@@ -5,7 +5,12 @@ from contextlib import asynccontextmanager
 from functools import lru_cache
 
 from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.pool import StaticPool
 
 from app.config import get_settings
@@ -60,7 +65,3 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
         yield session
 
 
-async def get_session() -> AsyncIterator[AsyncSession]:
-    factory = get_session_factory()
-    async with factory() as session:
-        yield session

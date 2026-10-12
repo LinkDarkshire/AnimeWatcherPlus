@@ -9,21 +9,62 @@ import structlog
 
 from app.config import Settings
 from app.domain.metadata import AnimeMetadata, EpisodeInfo, ProviderManifest, SearchHit, TagInfo
+from app.domain.titles import (
+    DEFAULT_TITLE_ORDER,
+    TITLE_VARIANT_EN,
+    TITLE_VARIANT_JA,
+    TITLE_VARIANT_MAIN,
+    Variants,
+    pick_variants,
+    resolve_title,
+)
+from app.providers.anidb_activity import AniDBActivity, describe
 from app.providers.base import CircuitBreaker, MetadataProvider, ProviderBannedError, RateLimiter
 
 logger = structlog.get_logger(__name__)
 
 ANIDB_HTTP_API = "http://api.anidb.net:9001/httpapi"
 ANIDB_PICTURE_BASE = "http://img7.anidb.net/pics/anime/"
-CACHE_TTL_S = 7 * 24 * 3600  # NFA-04: 7 Tage Response-Cache
+CACHE_TTL_S = 7 * 24 * 3600  # answers are reused from the disk cache for 7 days
 BAN_SETTING_KEY = "anidb_banned_until"  # Setting.value: wall-clock time.time() epoch seconds
 
 
+def cache_dir(settings: Settings) -> Path:
+    return settings.data_dir / "cache" / "anidb"
+
+
+def cached_metadata(settings: Settings, aid: int) -> AnimeMetadata | None:
+    """The full parsed metadata from the on-disk response cache, ignoring its
+    freshness window. Lets the repair scan restore titles, year, type,
+    description and the episode list for anime the staleness rule keeps out of
+    rescans -- without a single request."""
+    try:
+        xml_bytes = (cache_dir(settings) / f"{aid}.xml").read_bytes()
+    except OSError:
+        return None
+    return _parse_anime_xml(xml_bytes, aid)
+
+
+def cached_title_variants(settings: Settings, aid: int) -> Variants | None:
+    """Just the title variants from the cached response -- the repair scan's
+    cheapest useful recovery, and all the startup backfill needs. Returns None
+    when nothing usable is cached (missing file, unparseable, or an error
+    response, which carries no titles)."""
+    metadata = cached_metadata(settings, aid)
+    if metadata is None:
+        return None
+    variants = {
+        TITLE_VARIANT_MAIN: metadata.title_main,
+        TITLE_VARIANT_EN: metadata.title_en,
+        TITLE_VARIANT_JA: metadata.title_ja,
+    }
+    return variants if any(variants.values()) else None
+
+
 class AniDBProvider(MetadataProvider):
-    """Reference metadata provider (A-06): registered HTTP client, strict rate
-    limiting, ban detection, and a 7-day on-disk response cache so repeated scans
-    of an unchanged library never re-hit the API (NFA-04, goal: 0 API bans).
-    """
+    """Fetches anime metadata from AniDB's HTTP API -- carefully: requests are
+    rate limited, a ban is detected and respected, and every answer is cached
+    on disk for 7 days, so rescanning an unchanged library sends nothing."""
 
     def __init__(self, settings: Settings, http_client: httpx.AsyncClient | None = None) -> None:
         self.manifest = ProviderManifest(
@@ -37,12 +78,37 @@ class AniDBProvider(MetadataProvider):
         self._client = http_client or httpx.AsyncClient()
         self._limiter = RateLimiter(settings.anidb_min_interval_s, settings.anidb_daily_cap)
         self.circuit_breaker = CircuitBreaker()
-        self._cache_dir = settings.data_dir / "cache" / "anidb"
+        self._cache_dir = cache_dir(settings)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        # Wall-clock (time.time()), not monotonic: this must survive a
-        # process restart during the ~24h ban window (Kap. 9.3 Edge Case 6),
-        # so a restart can't accidentally resume hammering a still-banned API.
+        # Wall-clock time, not monotonic: the ban is saved and has to stay
+        # valid across a restart, so a restart can't resume requests early.
         self._banned_until: float = 0.0
+        self.activity = AniDBActivity()
+
+    @property
+    def limiter(self) -> RateLimiter:
+        return self._limiter
+
+    @property
+    def banned_until(self) -> float:
+        return self._banned_until
+
+    def blocked(self) -> tuple[str | None, float | None]:
+        """(reason, until epoch) while no request can go out: "ban" (AniDB
+        banned this client), "daily_cap" (our own daily limit is used up),
+        "paused" (too many failures in a row); (None, None) otherwise."""
+        now = time.time()
+        if self._banned_until > now:
+            return "ban", self._banned_until
+        cap = self._limiter.daily_cap
+        if cap is not None and self._limiter.calls_today >= cap:
+            tomorrow = time.localtime(now + 86400)
+            midnight = time.mktime((tomorrow.tm_year, tomorrow.tm_mon, tomorrow.tm_mday, 0, 0, 0, 0, 0, -1))
+            return "daily_cap", midnight
+        remaining = self.circuit_breaker.remaining_s()
+        if remaining > 0:
+            return "paused", now + remaining
+        return None, None
 
     async def load_ban_state(self) -> None:
         """Restores a still-active ban across a process restart. Call once
@@ -77,9 +143,8 @@ class AniDBProvider(MetadataProvider):
             await session.commit()
 
     async def search(self, title: str, year: int | None) -> list[SearchHit]:
-        # AniDB has no public HTTP text-search endpoint; the identification
-        # pipeline resolves titles via the local title dump (titledump.fuzzy_match)
-        # before ever calling fetch(). See Kap. 4.4 sequence diagram.
+        # AniDB's HTTP API has no title search. Identification finds the
+        # AniDB id in the local title list (titledump.fuzzy_match) instead.
         return []
 
     async def fetch(self, external_id: str) -> AnimeMetadata | None:
@@ -111,7 +176,10 @@ class AniDBProvider(MetadataProvider):
         if self.circuit_breaker.is_open():
             raise ProviderBannedError("AniDB circuit breaker is open")
 
-        xml_bytes = await self._request_with_retry(aid)
+        try:
+            xml_bytes = await self._request_with_retry(aid)
+        finally:
+            await self.activity.set("idle")
         if xml_bytes is None:
             self.circuit_breaker.record_failure()
             return None
@@ -139,7 +207,11 @@ class AniDBProvider(MetadataProvider):
         backoff = 1.0
         for attempt in range(max_retries):
             try:
+                wait = self._limiter.pending_wait()
+                if wait > 0:
+                    await self.activity.set("waiting", describe(aid), wait)
                 await self._limiter.acquire()
+                await self.activity.set("requesting", describe(aid))
                 response = await self._client.get(
                     ANIDB_HTTP_API,
                     params={
@@ -212,34 +284,24 @@ def _extract_all_titles(root: ET.Element) -> list[tuple[str, str | None, str | N
     return all_titles
 
 
-def _pick_title(
-    all_titles: list[tuple[str, str | None, str | None]],
-    lang: str | None = None,
-    ttype: str | None = None,
-) -> str | None:
-    for text, title_lang, title_type in all_titles:
-        if (lang is None or title_lang == lang) and (ttype is None or title_type == ttype):
-            return text
-    return None
-
-
 def _pick_primary_and_original(
     all_titles: list[tuple[str, str | None, str | None]], aid: int
-) -> tuple[str, str | None]:
-    # AniDB lists titles in an arbitrary language order per anime; picking the
-    # first "official" title (as this used to do) could just as easily land
-    # on Japanese kanji as on English, depending on the entry. Prefer an
-    # English official title for the primary display title, since that's
-    # most useful for this UI's audience; fall back progressively.
-    main_title = _pick_title(all_titles, ttype="main")
-    title = (
-        _pick_title(all_titles, lang="en", ttype="official")
-        or _pick_title(all_titles, ttype="official")
-        or main_title
-        or (all_titles[0][0] if all_titles else None)
-        or f"AniDB #{aid}"
-    )
-    return title, main_title
+) -> tuple[str, str | None, Variants]:
+    """Returns (primary title, original/main title, the three language
+    variants).
+
+    AniDB lists titles in an arbitrary language order per anime, and within
+    one language emits several entries of differing quality, so the split into
+    variants (domain.titles.pick_variants) ranks by title *type* per language
+    rather than taking whichever entry happens to come first in document
+    order. The primary title here is only a default: it follows
+    DEFAULT_TITLE_ORDER, and the identification pipeline re-resolves it
+    against the user's configured `display_title_order` before persisting.
+    """
+    variants = pick_variants(all_titles)
+    fallback = all_titles[0][0] if all_titles else f"AniDB #{aid}"
+    title = resolve_title(variants, DEFAULT_TITLE_ORDER, fallback)
+    return title, variants[TITLE_VARIANT_MAIN], variants
 
 
 def _parse_tags(root: ET.Element) -> list[TagInfo]:
@@ -262,6 +324,29 @@ def _parse_tags(root: ET.Element) -> list[TagInfo]:
     return tags
 
 
+_EPISODE_TITLE_LANG_PREFERENCE = ("en", "x-jat", "ja")
+
+
+def _pick_preferred_episode_title(ep_el: ET.Element) -> str | None:
+    """The episode title in the preferred language: English, then romanized
+    Japanese, then Japanese script. AniDB lists one <title> per language for
+    each episode, in no particular order."""
+    by_lang: dict[str | None, str] = {}
+    first: str | None = None
+    for t in ep_el.findall("title"):
+        if not t.text:
+            continue
+        if first is None:
+            first = t.text
+        lang = t.get(_XML_LANG_ATTR)
+        if lang not in by_lang:
+            by_lang[lang] = t.text
+    for lang in _EPISODE_TITLE_LANG_PREFERENCE:
+        if lang in by_lang:
+            return by_lang[lang]
+    return first
+
+
 def _parse_anime_xml(xml_bytes: bytes, aid: int) -> AnimeMetadata | None:
     try:
         root = ET.fromstring(xml_bytes)
@@ -269,7 +354,7 @@ def _parse_anime_xml(xml_bytes: bytes, aid: int) -> AnimeMetadata | None:
         return None
 
     all_titles = _extract_all_titles(root)
-    title, main_title = _pick_primary_and_original(all_titles, aid)
+    title, main_title, variants = _pick_primary_and_original(all_titles, aid)
     alt_titles = [text for text, _, _ in all_titles if text != title]
 
     year = None
@@ -292,11 +377,10 @@ def _parse_anime_xml(xml_bytes: bytes, aid: int) -> AnimeMetadata | None:
             epno_el = ep_el.find("epno")
             if epno_el is None or not epno_el.text:
                 continue
-            ep_title_el = ep_el.find("title")
             episodes.append(
                 EpisodeInfo(
                     ep_number=epno_el.text,
-                    title=ep_title_el.text if ep_title_el is not None else None,
+                    title=_pick_preferred_episode_title(ep_el),
                     air_date=ep_el.findtext("airdate"),
                 )
             )
@@ -305,6 +389,9 @@ def _parse_anime_xml(xml_bytes: bytes, aid: int) -> AnimeMetadata | None:
         external_id=str(aid),
         title=title,
         original_title=main_title,
+        title_main=variants[TITLE_VARIANT_MAIN],
+        title_en=variants[TITLE_VARIANT_EN],
+        title_ja=variants[TITLE_VARIANT_JA],
         alt_titles=alt_titles,
         year=year,
         media_type=media_type,
@@ -339,7 +426,7 @@ def parse_full_anime_info(xml_bytes: bytes, aid: int) -> dict | None:
         return None
 
     all_titles = _extract_all_titles(root)
-    primary_title, original_title = _pick_primary_and_original(all_titles, aid)
+    primary_title, original_title, _ = _pick_primary_and_original(all_titles, aid)
 
     picture = root.findtext("picture")
 

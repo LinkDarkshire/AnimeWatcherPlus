@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import column, delete, func, select, text, update
+from sqlalchemy import table as sa_table
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.db.completeness import anime_ids_with_missing_episodes
 from app.db.models import (
     Anime,
     AnimeProviderId,
@@ -16,6 +18,23 @@ from app.db.models import (
     LocalEpisode,
     Tag,
 )
+from app.domain.titles import TITLE_VARIANT_EN, TITLE_VARIANT_JA, TITLE_VARIANT_MAIN, Variants
+
+_FTS_TABLE = sa_table("anime_search_fts", column("anime_id"))
+_REVIEW_STATUSES = ("needs_manual_id", "review")
+
+
+def _fts_match_subquery(query: str):
+    """`SELECT anime_id FROM anime_search_fts WHERE anime_search_fts MATCH ?`
+    as a composable subquery. The term is wrapped in an FTS5 string literal so
+    punctuation in the user's input is taken literally rather than as query
+    syntax; embedded double quotes are doubled, which is how FTS5 escapes them
+    (without this, a single `"` makes the whole MATCH a syntax error)."""
+    escaped = query.replace('"', '""')
+    return (
+        select(_FTS_TABLE.c.anime_id)
+        .where(text("anime_search_fts MATCH :fts_query").bindparams(fts_query=f'"{escaped}"*'))
+    )
 
 
 class FolderRepo:
@@ -67,15 +86,10 @@ class FolderRepo:
         await self.session.execute(delete(Folder).where(Folder.id == folder_id))
         await self.session.commit()
 
-    async def set_active(self, folder_id: int, active: bool) -> None:
-        folder = await self.get(folder_id)
-        if folder is not None:
-            folder.active = active
-            await self.session.commit()
-
 
 class AnimeRepo:
-    """All writes that touch `anime` also keep `anime_search_fts` in sync (Kap. 6.2)."""
+    """Reads and writes anime rows. Every write that changes a title also
+    updates the full-text search table `anime_search_fts`."""
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -92,10 +106,6 @@ class AnimeRepo:
         result = await self.session.execute(select(Anime).where(Anime.directory_path == directory_path))
         return result.scalar_one_or_none()
 
-    async def get_by_anidb_id(self, anidb_id: int) -> Anime | None:
-        result = await self.session.execute(select(Anime).where(Anime.anidb_id == anidb_id))
-        return result.scalar_one_or_none()
-
     async def set_poster_path(self, anime_id: int, poster_path: str | None) -> None:
         anime = await self.session.get(Anime, anime_id)
         if anime is not None:
@@ -107,23 +117,113 @@ class AnimeRepo:
         self.session.add(anime)
         await self.session.commit()
         await self.session.refresh(anime)
-        await self._sync_fts(anime)
+        await self.sync_fts(anime)
         return anime
 
-    async def mark_missing_on_disk(self, anime_id: int, missing: bool) -> None:
+    async def set_no_scan(self, anime_id: int, no_scan: bool) -> None:
         anime = await self.session.get(Anime, anime_id)
         if anime is not None:
-            anime.missing_on_disk = missing
+            anime.no_scan = no_scan
             await self.session.commit()
 
+    async def mark_no_scan(self, anime_ids: list[int]) -> None:
+        """Bulk-persists the staleness verdict for anime the startup rescan
+        just decided to freeze out -- see the `no_scan` column's docstring
+        on the model for why this exists instead of recomputing is_stale()
+        against the whole library on every single startup."""
+        if not anime_ids:
+            return
+        await self.session.execute(update(Anime).where(Anime.id.in_(anime_ids)).values(no_scan=True))
+        await self.session.commit()
+
     async def delete(self, anime_id: int) -> None:
+        """Removes one anime's catalog entry (e.g. resolving a confirmed
+        duplicate) -- does NOT touch the files on disk, only the DB rows.
+
+        Mirrors FolderRepo.delete's reasoning: a bare `DELETE FROM anime`
+        violates FK constraints the moment child rows exist, and ORM cascade
+        triggers lazy-loads outside a valid greenlet context. Explicit,
+        dependency-ordered deletes sidestep both. `duplicate_of_anime_id` is
+        a self-referential FK, so any other anime row pointing at this one
+        must be cleared first too, then the rest of that duplicate group
+        (if any) gets its flags recomputed from scratch.
+        """
+        anime = await self.session.get(Anime, anime_id)
+        if anime is None:
+            return
+        anidb_id = anime.anidb_id
+
+        for table in (LocalEpisode, ExpectedEpisode, AnimeTag, AnimeProviderId, JobLog):
+            await self.session.execute(delete(table).where(table.anime_id == anime_id))
+        await self.session.execute(
+            update(Anime)
+            .where(Anime.duplicate_of_anime_id == anime_id)
+            .values(duplicate_of_anime_id=None, is_duplicate=False)
+        )
         await self.session.execute(
             text("DELETE FROM anime_search_fts WHERE anime_id = :aid"), {"aid": anime_id}
         )
         await self.session.execute(delete(Anime).where(Anime.id == anime_id))
         await self.session.commit()
 
-    async def _sync_fts(self, anime: Anime) -> None:
+        await self.recompute_duplicate_flags(anidb_id)
+
+    async def recompute_duplicate_flags(self, anidb_id: int | None) -> None:
+        """Re-derives is_duplicate/duplicate_of_anime_id for every anime
+        sharing `anidb_id`, from scratch. Needed after anything that changes
+        a duplicate group's membership (deleting one entry, or re-identifying
+        one entry to a different AniDB ID) -- apply_identification only ever
+        updates the single row it's identifying, which can leave sibling rows
+        pointing at a now-stale duplicate_of_anime_id."""
+        if anidb_id is None:
+            return
+        result = await self.session.execute(
+            select(Anime).where(Anime.anidb_id == anidb_id).order_by(Anime.id)
+        )
+        group = list(result.scalars().all())
+        if len(group) <= 1:
+            for a in group:
+                a.is_duplicate = False
+                a.duplicate_of_anime_id = None
+        else:
+            primary, *rest = group
+            primary.is_duplicate = False
+            primary.duplicate_of_anime_id = None
+            for a in rest:
+                a.is_duplicate = True
+                a.duplicate_of_anime_id = primary.id
+        await self.session.commit()
+
+    async def list_duplicate_groups(self) -> list[tuple[int, list[Anime]]]:
+        """Groups of 2+ anime sharing the same (non-null) AniDB ID."""
+        dup_ids_result = await self.session.execute(
+            select(Anime.anidb_id)
+            .where(Anime.anidb_id.is_not(None))
+            .group_by(Anime.anidb_id)
+            .having(func.count(Anime.id) > 1)
+        )
+        dup_ids = [row[0] for row in dup_ids_result.all()]
+        if not dup_ids:
+            return []
+
+        result = await self.session.execute(
+            select(Anime).where(Anime.anidb_id.in_(dup_ids)).order_by(Anime.anidb_id, Anime.id)
+        )
+        groups: dict[int, list[Anime]] = {}
+        for anime in result.scalars().all():
+            if anime.anidb_id is None:  # excluded by the query; keeps the key type honest
+                continue
+            groups.setdefault(anime.anidb_id, []).append(anime)
+        # Within a group, entries stay in id order (the lowest id is the one the
+        # others are marked as duplicates of); the groups are sorted by title.
+        return sorted(groups.items(), key=lambda item: item[1][0].title.casefold())
+
+    async def sync_fts(self, anime: Anime, *, commit: bool = True) -> None:
+        """Rewrites this anime's row in the search index. Besides `alt_titles`
+        it indexes all three language variants, so every title stays
+        searchable whichever one is currently shown as the display title."""
+        searchable = [*(anime.alt_titles or []), anime.title_main, anime.title_en, anime.title_ja]
+        alt_text = " ".join(dict.fromkeys(value for value in searchable if value))
         await self.session.execute(
             text("DELETE FROM anime_search_fts WHERE anime_id = :aid"), {"aid": anime.id}
         )
@@ -132,9 +232,13 @@ class AnimeRepo:
                 "INSERT INTO anime_search_fts(anime_id, title, alt_titles_text) "
                 "VALUES (:aid, :title, :alt)"
             ),
-            {"aid": anime.id, "title": anime.title, "alt": " ".join(anime.alt_titles or [])},
+            {"aid": anime.id, "title": anime.title, "alt": alt_text},
         )
-        await self.session.commit()
+        # Bulk callers (the title backfill touches hundreds of rows at once)
+        # pass commit=False and commit once, instead of paying a transaction
+        # per row.
+        if commit:
+            await self.session.commit()
 
     async def apply_identification(
         self,
@@ -143,12 +247,13 @@ class AnimeRepo:
         anidb_id: int | None,
         title: str,
         original_title: str | None,
+        title_variants: Variants,
         alt_titles: list[str],
         year: int | None,
         media_type: str | None,
         description: str | None,
         tags: list[tuple[str, int, int | None]],  # (name, weight, anidb_tag_id)
-        expected_episodes: list[tuple[str, str | None]],  # (ep_number, title)
+        expected_episodes: list[tuple[str, str | None, dt.date | None]],  # (ep_number, title, air_date)
         ident_status: str,
         match_score: float | None,
         provider: str | None = None,
@@ -157,9 +262,8 @@ class AnimeRepo:
         anime = await self.session.get(Anime, anime_id)
         assert anime is not None
 
-        # FA-29: the same AniDB ID can legitimately exist in two folders
-        # (duplicate copies of a series) -- flag it rather than silently
-        # overwriting or letting a DB constraint reject the second one.
+        # The same anime can exist in two folders (two copies of a series):
+        # mark the second one as a duplicate instead of rejecting it.
         if anidb_id is not None:
             existing = await self.session.execute(
                 select(Anime).where(Anime.anidb_id == anidb_id, Anime.id != anime_id)
@@ -174,6 +278,9 @@ class AnimeRepo:
         anime.anidb_id = anidb_id
         anime.title = title
         anime.original_title = original_title
+        anime.title_main = title_variants.get(TITLE_VARIANT_MAIN)
+        anime.title_en = title_variants.get(TITLE_VARIANT_EN)
+        anime.title_ja = title_variants.get(TITLE_VARIANT_JA)
         anime.alt_titles = alt_titles
         anime.year = year
         anime.media_type = media_type
@@ -181,7 +288,7 @@ class AnimeRepo:
         anime.ident_status = ident_status
         anime.match_score = match_score
         anime.episode_count_expected = len(expected_episodes) or None
-        anime.last_metadata_refresh = dt.datetime.now(dt.timezone.utc)
+        anime.last_metadata_refresh = dt.datetime.now(dt.UTC)
 
         await self.session.execute(delete(AnimeTag).where(AnimeTag.anime_id == anime_id))
         for name, weight, anidb_tag_id in tags:
@@ -189,16 +296,18 @@ class AnimeRepo:
             self.session.add(AnimeTag(anime_id=anime_id, tag_id=tag.id, weight=weight))
 
         await self.session.execute(delete(ExpectedEpisode).where(ExpectedEpisode.anime_id == anime_id))
-        for ep_number, ep_title in expected_episodes:
-            self.session.add(ExpectedEpisode(anime_id=anime_id, ep_number=ep_number, title=ep_title))
+        for ep_number, ep_title, air_date in expected_episodes:
+            self.session.add(
+                ExpectedEpisode(anime_id=anime_id, ep_number=ep_number, title=ep_title, air_date=air_date)
+            )
 
         if provider and external_id:
-            existing = await self.session.execute(
+            provider_rows = await self.session.execute(
                 select(AnimeProviderId).where(
                     AnimeProviderId.anime_id == anime_id, AnimeProviderId.provider == provider
                 )
             )
-            row = existing.scalar_one_or_none()
+            row = provider_rows.scalar_one_or_none()
             if row is None:
                 self.session.add(AnimeProviderId(anime_id=anime_id, provider=provider, external_id=external_id))
             else:
@@ -206,7 +315,7 @@ class AnimeRepo:
 
         await self.session.commit()
         await self.session.refresh(anime)
-        await self._sync_fts(anime)
+        await self.sync_fts(anime)
         return anime
 
     async def mark_conflicted(self, anime_id: int, anidb_id: int, title: str) -> Anime:
@@ -225,13 +334,9 @@ class AnimeRepo:
         return anime
 
     async def _get_or_create_tag(self, name: str, anidb_tag_id: int | None) -> Tag:
-        """Looks up by `anidb_tag_id` first when available -- that's the
-        actual stable identity AniDB assigns; `name` is just a mutable label
-        that AniDB does occasionally rename (or that differs only in case
-        between two imports). Looking up by name first (the old behavior)
-        misses a renamed tag entirely and then tries to INSERT a second row
-        with the same anidb_tag_id, hitting its UNIQUE constraint.
-        """
+        """Finds a tag by its AniDB tag id first -- the id never changes,
+        while AniDB does rename tags now and then. Falls back to the name, and
+        creates the tag if neither exists."""
         if anidb_tag_id is not None:
             result = await self.session.execute(select(Tag).where(Tag.anidb_tag_id == anidb_tag_id))
             tag = result.scalar_one_or_none()
@@ -265,25 +370,24 @@ class AnimeRepo:
         status_filter: str | None,
         page: int,
         size: int,
+        missing_only: bool = False,
     ) -> tuple[list[Anime], int]:
         stmt = select(Anime)
         if query:
-            fts_ids = await self.session.execute(
-                text(
-                    "SELECT anime_id FROM anime_search_fts WHERE anime_search_fts MATCH :q"
-                ),
-                {"q": f'"{query}"*'},
-            )
-            ids = [row[0] for row in fts_ids.all()]
-            if not ids:
-                return [], 0
-            stmt = stmt.where(Anime.id.in_(ids))
+            # Correlated subquery rather than fetching every matching id into
+            # Python first: on a large library a broad prefix search matches
+            # thousands of rows, and the old version turned all of them into
+            # an IN (...) list with one bind parameter each, just to then read
+            # a single page of 60.
+            stmt = stmt.where(Anime.id.in_(_fts_match_subquery(query)))
         if year is not None:
             stmt = stmt.where(Anime.year == year)
         if media_type is not None:
             stmt = stmt.where(Anime.media_type == media_type)
         if status_filter is not None:
             stmt = stmt.where(Anime.ident_status == status_filter)
+        if missing_only:
+            stmt = stmt.where(Anime.id.in_(anime_ids_with_missing_episodes))
         if tag is not None:
             stmt = stmt.join(AnimeTag, AnimeTag.anime_id == Anime.id).join(Tag, Tag.id == AnimeTag.tag_id).where(
                 Tag.name == tag
@@ -298,9 +402,33 @@ class AnimeRepo:
 
     async def list_needing_review_or_manual(self) -> list[Anime]:
         result = await self.session.execute(
-            select(Anime).where(Anime.ident_status.in_(["needs_manual_id", "review"]))
+            select(Anime)
+            .where(Anime.ident_status.in_(_REVIEW_STATUSES))
+            .order_by(Anime.title.collate("NOCASE"))
         )
         return list(result.scalars().all())
+
+    async def count_needing_review_or_manual(self) -> int:
+        """COUNT(*) instead of loading the rows -- the nav badge only needs
+        the number, and this runs after every scan/identify event."""
+        result = await self.session.execute(
+            select(func.count()).select_from(Anime).where(Anime.ident_status.in_(_REVIEW_STATUSES))
+        )
+        return result.scalar_one()
+
+    async def count_duplicate_groups(self) -> int:
+        """Number of AniDB IDs shared by 2+ catalog entries, counted in SQL --
+        `list_duplicate_groups` would otherwise load every anime in every
+        duplicate group just to take a len()."""
+        grouped = (
+            select(Anime.anidb_id)
+            .where(Anime.anidb_id.is_not(None))
+            .group_by(Anime.anidb_id)
+            .having(func.count(Anime.id) > 1)
+            .subquery()
+        )
+        result = await self.session.execute(select(func.count()).select_from(grouped))
+        return result.scalar_one()
 
     async def list_identified(self) -> list[Anime]:
         """Eager-loads `expected_episodes` -- callers need it for the
@@ -340,12 +468,6 @@ class JobLogRepo:
         await self.session.commit()
         return entry
 
-    async def recent(self, limit: int = 100) -> list[JobLog]:
-        result = await self.session.execute(
-            select(JobLog).order_by(JobLog.created_at.desc()).limit(limit)
-        )
-        return list(result.scalars().all())
-
 
 class LocalEpisodeRepo:
     def __init__(self, session: AsyncSession) -> None:
@@ -375,6 +497,22 @@ class LocalEpisodeRepo:
     async def by_anime(self, anime_id: int) -> list[LocalEpisode]:
         result = await self.session.execute(select(LocalEpisode).where(LocalEpisode.anime_id == anime_id))
         return list(result.scalars().all())
+
+    async def get(self, episode_id: int) -> LocalEpisode | None:
+        return await self.session.get(LocalEpisode, episode_id)
+
+    async def set_manual_ep_number(self, episode_id: int, ep_number: str | None) -> LocalEpisode | None:
+        """Sets an episode number by hand, for filenames the parser can't
+        read. `manual_override` keeps later scans from overwriting it; setting
+        the number back to None hands it back to the parser."""
+        episode = await self.session.get(LocalEpisode, episode_id)
+        if episode is None:
+            return None
+        episode.ep_number = ep_number
+        episode.manual_override = ep_number is not None
+        await self.session.commit()
+        await self.session.refresh(episode)
+        return episode
 
     async def delete_by_path(self, file_path: str) -> None:
         await self.session.execute(delete(LocalEpisode).where(LocalEpisode.file_path == file_path))
