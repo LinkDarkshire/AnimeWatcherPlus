@@ -229,7 +229,7 @@ async def test_unassigned_files_are_the_ones_without_a_matching_episode(db_sessi
         "Energy Kyouka!! Vol.01.mp4", "Extra - 13.mp4",
     ]
     assert await repo.count_unassigned_files() == 2
-    choices = await repo.numbered_episodes([kyouka])
+    choices = await repo.episode_choices([kyouka])
     assert [e.ep_number for e in choices[kyouka]] == ["1", "2"]
 
 

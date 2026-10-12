@@ -55,42 +55,46 @@ function UnassignedGroupCard({ group }: { group: UnassignedGroup }) {
           return (
             <div
               key={file.episode_id}
-              className="flex flex-wrap items-center gap-2 rounded border border-[hsl(var(--border))] px-2 py-1.5 text-sm"
+              className="space-y-2 rounded border border-[hsl(var(--border))] p-2 text-sm"
             >
-              <div className="min-w-0 flex-1">
-                <p className="truncate" title={file.file_name}>
-                  {file.file_name}
-                </p>
+              {/* The full name, wrapped -- it's what the user decides by. */}
+              <div>
+                <p className="break-all">{file.file_name}</p>
                 <p className="text-xs text-amber-600 dark:text-amber-400">
                   {file.ep_number === null
                     ? t("unassigned.noNumber")
                     : t("unassigned.unknownNumber", { number: file.ep_number })}
                 </p>
               </div>
-              <select
-                value={choice}
-                onChange={(e) => setChoices((prev) => ({ ...prev, [file.episode_id]: e.target.value }))}
-                className="h-8 max-w-[16rem] rounded-md border border-[hsl(var(--border))] bg-transparent px-2 text-xs"
-              >
-                <option value="" disabled>
-                  {t("unassigned.pick")}
-                </option>
+              <div className="flex gap-2">
+                <select
+                  value={choice}
+                  onChange={(e) => setChoices((prev) => ({ ...prev, [file.episode_id]: e.target.value }))}
+                  // Explicit colors: the native dropdown list otherwise ends
+                  // up unreadable in the dark theme on some systems.
+                  className="h-9 min-w-0 flex-1 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-2 text-sm text-[hsl(var(--foreground))]"
+                >
+                  {/* A normal option, not a disabled one: some webviews show
+                      a disabled placeholder as an empty box. */}
+                  <option value="">{t("unassigned.pick")}</option>
+                  <option value="extra">{t("unassigned.extra")}</option>
                 {group.episodes.map((episode) => (
                   <option key={episode.ep_number} value={episode.ep_number}>
-                    {t("unassigned.episodeOption", { number: episode.ep_number })}
-                    {episode.title ? ` – ${episode.title}` : ""}
+                    {`${t(/^\d+$/.test(episode.ep_number) ? "unassigned.episodeOption" : "unassigned.specialOption", {
+                      number: episode.ep_number,
+                    })}${episode.title ? ` – ${episode.title}` : ""}`}
                   </option>
                 ))}
-              </select>
-              <Button
-                size="sm"
-                disabled={!choice || update.isPending}
-                onClick={() =>
-                  update.mutate({ animeId: group.anime_id, episodeId: file.episode_id, epNumber: choice })
-                }
-              >
-                {t("common.save")}
-              </Button>
+                </select>
+                <Button
+                  disabled={!choice || update.isPending}
+                  onClick={() =>
+                    update.mutate({ animeId: group.anime_id, episodeId: file.episode_id, epNumber: choice })
+                  }
+                >
+                  {t("common.save")}
+                </Button>
+              </div>
             </div>
           )
         })}

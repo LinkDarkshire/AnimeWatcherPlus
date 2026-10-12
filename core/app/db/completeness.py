@@ -191,7 +191,13 @@ class CompletenessRepo:
         return (
             select(LocalEpisode, Anime.title)
             .join(Anime, Anime.id == LocalEpisode.anime_id)
-            .where(Anime.ident_status == "identified", has_numbered_episodes, ~matching_episode)
+            .where(
+                Anime.ident_status == "identified",
+                has_numbered_episodes,
+                ~matching_episode,
+                # Assigned by hand (to a special, or marked as an extra): settled.
+                LocalEpisode.manual_override.is_(False),
+            )
         )
 
     async def unassigned_files(self) -> list[tuple[LocalEpisode, str]]:
@@ -207,22 +213,27 @@ class CompletenessRepo:
             await self.session.execute(select(func.count()).select_from(self._unassigned_query().subquery()))
         ).scalar_one()
 
-    async def numbered_episodes(self, anime_ids: Sequence[int]) -> dict[int, list[MissingEpisode]]:
-        """The numbered episode list per anime, for picking the right one."""
+    async def episode_choices(self, anime_ids: Sequence[int]) -> dict[int, list[MissingEpisode]]:
+        """Every episode AniDB lists per anime, for picking the right one by
+        hand: regular episodes in order first, then specials, credits and the
+        like (S1, C1, ...)."""
         if not anime_ids:
             return {}
         rows = (
             await self.session.execute(
                 select(ExpectedEpisode.anime_id, ExpectedEpisode.ep_number, ExpectedEpisode.title, ExpectedEpisode.air_date)
-                .where(ExpectedEpisode.anime_id.in_(anime_ids), _EXPECTED_IS_NUMBERED)
-                .order_by(ExpectedEpisode.anime_id, _EXPECTED_NUMBER)
+                .where(ExpectedEpisode.anime_id.in_(anime_ids))
+                .order_by(ExpectedEpisode.anime_id, ExpectedEpisode.id)
             )
         ).all()
         result: dict[int, list[MissingEpisode]] = {}
         for anime_id, ep_number, title, air_date in rows:
+            number = str(int(ep_number)) if ep_number.isdigit() else ep_number
             episodes = result.setdefault(anime_id, [])
-            if not any(int(e.ep_number) == int(ep_number) for e in episodes):
-                episodes.append(MissingEpisode(ep_number=str(int(ep_number)), title=title, air_date=air_date))
+            if all(e.ep_number != number for e in episodes):
+                episodes.append(MissingEpisode(ep_number=number, title=title, air_date=air_date))
+        for episodes in result.values():
+            episodes.sort(key=lambda e: (0, int(e.ep_number), "") if e.ep_number.isdigit() else (1, 0, e.ep_number))
         return result
 
     async def assign_lone_file(self, anime_id: int) -> bool:

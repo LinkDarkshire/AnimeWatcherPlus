@@ -999,3 +999,28 @@ async def test_media_scan_queues_every_active_folder(client, db_session, tmp_pat
     assert response.status_code == 202
     assert response.json() == {"folders": 2}
     assert fake_state.job_queue.enqueue.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_unassigned_file_can_go_to_a_special_or_be_marked_extra(client, db_session, tmp_path) -> None:
+    from app.db.models import ExpectedEpisode, LocalEpisode
+    from app.db.repositories import AnimeRepo, FolderRepo
+
+    folder = await FolderRepo(db_session).create(str(tmp_path / "c"), "content", "C")
+    anime = await AnimeRepo(db_session).create_pending(folder.id, str(tmp_path / "c" / "BB"), "BB")
+    anime.ident_status = "identified"
+    for number, title in (("1", "One"), ("2", "Two"), ("S1", "Special One")):
+        db_session.add(ExpectedEpisode(anime_id=anime.id, ep_number=number, title=title))
+    bonus = LocalEpisode(anime_id=anime.id, file_path=str(tmp_path / "c" / "BB" / "BB_Bonus.mp4"))
+    making_of = LocalEpisode(anime_id=anime.id, file_path=str(tmp_path / "c" / "BB" / "Making of.mp4"))
+    db_session.add_all([bonus, making_of])
+    await db_session.commit()
+
+    [group] = (await client.get("/api/v1/unassigned-files")).json()
+    assert [e["ep_number"] for e in group["episodes"]] == ["1", "2", "S1"]
+
+    url = f"/api/v1/animes/{anime.id}/episodes"
+    assert (await client.patch(f"{url}/{bonus.id}", json={"ep_number": "s1"})).json()["ep_number"] == "S1"
+    assert (await client.patch(f"{url}/{making_of.id}", json={"ep_number": "Extra"})).json()["ep_number"] == "extra"
+    assert (await client.patch(f"{url}/{making_of.id}", json={"ep_number": "C7"})).status_code == 422
+    assert (await client.get("/api/v1/unassigned-files")).json() == []
