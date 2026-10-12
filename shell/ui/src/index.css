@@ -15,6 +15,9 @@
   --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 98%;
   --ring: 240 5% 65%;
+  /* Tells the webview which theme native controls (dropdown lists,
+     scrollbars, date pickers) should be drawn in. */
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -33,6 +36,7 @@
     --destructive: 0 63% 40%;
     --destructive-foreground: 0 0% 98%;
     --ring: 240 5% 40%;
+    color-scheme: dark;
   }
 }
 
@@ -45,6 +49,16 @@ body {
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
   font-family: -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+}
+
+/* Dropdowns in the app's own colors. Left transparent, the Linux webview
+   (WebKitGTK) draws them on the system's light background while the text
+   takes the app's light dark-theme color -- white on white. Outside any
+   layer on purpose, so it wins over utility classes like bg-transparent. */
+select,
+option {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
 }
 
 #root {
