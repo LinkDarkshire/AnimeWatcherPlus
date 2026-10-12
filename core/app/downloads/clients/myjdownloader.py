@@ -4,15 +4,19 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import time
 from typing import Any
 from urllib.parse import quote
 
 import httpx
+import structlog
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from app.downloads.base import DownloadClient, DownloadClientError, DownloadStatus, SettingField
+
+logger = structlog.get_logger(__name__)
 
 API_URL = "https://api.jdownloader.org"
 # Identifies this application to the MyJDownloader service.
@@ -153,6 +157,28 @@ class _Session:
         return json.loads(decrypt(self._device_token, response.text)).get("data")
 
 
+def _parse_handle(handle: str) -> tuple[str, str | None]:
+    """(package name, link) from what add() returned. Downloads sent by
+    older versions only stored the package name."""
+    if handle.startswith("{"):
+        try:
+            data = json.loads(handle)
+            return str(data.get("package") or ""), data.get("link") or None
+        except ValueError:
+            pass
+    return handle, None
+
+
+def _name_key(name: Any) -> str:
+    """Package names compared by letters and digits only: JDownloader drops
+    characters like ? and * that aren't allowed in folder names."""
+    return re.sub(r"[\W_]+", "", str(name or "")).casefold()
+
+
+def _url_key(url: Any) -> str:
+    return str(url or "").strip().rstrip("/")
+
+
 def _jd_status(package: dict[str, Any]) -> DownloadStatus:
     total = int(package.get("bytesTotal") or 0)
     loaded = int(package.get("bytesLoaded") or 0)
@@ -252,46 +278,49 @@ class MyJDownloaderClient(DownloadClient):
             await session.call(device_id, "/linkgrabberv2/addLinks", [query])
         finally:
             await session.disconnect()
-        # JDownloader keeps the package name (overwritePackagizerRules), so
-        # it finds the download again for the progress display.
-        return package_name
+        # Both the package name and the link are remembered: JDownloader may
+        # tidy up or rename the package, but the link stays findable.
+        return json.dumps({"package": package_name, "link": link})
 
     async def status(self, handles: list[str]) -> dict[str, DownloadStatus]:
+        progress_fields = {
+            "bytesLoaded": True,
+            "bytesTotal": True,
+            "finished": True,
+            "running": True,
+            "speed": True,
+            "eta": True,
+            "status": True,
+            "maxResults": -1,
+            "startAt": 0,
+        }
+        listing = {"maxResults": -1, "startAt": 0}
         session = await self._session()
         try:
             device_id = await self._with_device(session)
-            downloads = await session.call(
-                device_id,
-                "/downloadsV2/queryPackages",
-                [
-                    {
-                        "bytesLoaded": True,
-                        "bytesTotal": True,
-                        "finished": True,
-                        "running": True,
-                        "speed": True,
-                        "eta": True,
-                        "status": True,
-                        "maxResults": -1,
-                        "startAt": 0,
-                    }
-                ],
-            )
-            grabbed = await session.call(
-                device_id, "/linkgrabberv2/queryPackages", [{"maxResults": -1, "startAt": 0}]
-            )
+            packages = await session.call(device_id, "/downloadsV2/queryPackages", [progress_fields]) or []
+            links = await session.call(device_id, "/downloadsV2/queryLinks", [{**progress_fields, "url": True}]) or []
+            grabbed_packages = await session.call(device_id, "/linkgrabberv2/queryPackages", [listing]) or []
+            grabbed_links = await session.call(device_id, "/linkgrabberv2/queryLinks", [{**listing, "url": True}]) or []
         finally:
             await session.disconnect()
 
-        by_name = {str(p.get("name")): p for p in downloads or []}
-        waiting = {str(p.get("name")) for p in grabbed or []}
+        packages_by_name = {_name_key(p.get("name")): p for p in packages}
+        links_by_url = {_url_key(link.get("url")): link for link in links if link.get("url")}
+        waiting_names = {_name_key(p.get("name")) for p in grabbed_packages}
+        waiting_urls = {_url_key(link.get("url")) for link in grabbed_links if link.get("url")}
+
         found: dict[str, DownloadStatus] = {}
-        for name in handles:
-            package = by_name.get(name)
-            if package is not None:
-                found[name] = _jd_status(package)
-            elif name in waiting:
-                found[name] = DownloadStatus("queued", message="Wartet im Linkgrabber auf Bestätigung")
+        for handle in handles:
+            name, link = _parse_handle(handle)
+            if link and _url_key(link) in links_by_url:
+                found[handle] = _jd_status(links_by_url[_url_key(link)])
+            elif _name_key(name) in packages_by_name:
+                found[handle] = _jd_status(packages_by_name[_name_key(name)])
+            elif (link and _url_key(link) in waiting_urls) or _name_key(name) in waiting_names:
+                found[handle] = DownloadStatus("queued", message="Wartet im Linkgrabber auf Bestätigung")
+        if len(found) < len(handles):
+            logger.debug("myjd_status_unmatched", packages=list(packages_by_name)[:20])
         return found
 
     async def close(self) -> None:
