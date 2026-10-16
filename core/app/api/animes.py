@@ -6,11 +6,12 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_app_state, get_db
 from app.db.completeness import Completeness, CompletenessRepo
-from app.db.models import Anime
+from app.db.models import Anime, ExpectedEpisode
 from app.db.repositories import AnimeRepo, LocalEpisodeRepo
 from app.services import identification, sorter
 from app.services.artwork import POSTER_FILENAME
@@ -348,8 +349,8 @@ async def update_local_episode_number(
     if episode is None or episode.anime_id != anime_id:
         raise HTTPException(status_code=404, detail="Episode nicht gefunden")
     ep_number = payload.ep_number.strip() if payload.ep_number else None
-    if ep_number is not None and not ep_number.isdigit():
-        raise HTTPException(status_code=422, detail="Episodennummer muss eine Zahl sein")
+    if ep_number is not None:
+        ep_number = await _valid_episode_number(session, anime_id, ep_number)
 
     updated = await repo.set_manual_ep_number(episode_id, ep_number)
     assert updated is not None
@@ -358,6 +359,29 @@ async def update_local_episode_number(
         file_name=Path(updated.file_path).name,
         ep_number=updated.ep_number,
         manual_override=updated.manual_override,
+    )
+
+
+# Marks a file that belongs to no episode (a bonus, a making-of): it leaves
+# the unassigned list and is never matched, sorted or renamed as an episode.
+EXTRA_EPISODE = "extra"
+
+
+async def _valid_episode_number(session: AsyncSession, anime_id: int, value: str) -> str:
+    """A plain number, "extra", or one of the anime's other AniDB episode
+    numbers (specials like S1, credits like C1)."""
+    if value.isdigit():
+        return str(int(value))
+    if value.casefold() == EXTRA_EPISODE:
+        return EXTRA_EPISODE
+    known = (
+        await session.execute(select(ExpectedEpisode.ep_number).where(ExpectedEpisode.anime_id == anime_id))
+    ).scalars()
+    for number in known:
+        if number.casefold() == value.casefold():
+            return number
+    raise HTTPException(
+        status_code=422, detail="Episodennummer muss eine Zahl, eine AniDB-Folge (z. B. S1) oder 'extra' sein"
     )
 
 
@@ -422,6 +446,46 @@ async def get_anime_pending_actions(
             else None
         ),
     )
+
+
+class UnassignedFileOut(BaseModel):
+    episode_id: int
+    file_name: str
+    # The number read from the file name, if any -- set but not an episode
+    # AniDB lists (e.g. 13 for a 12-episode series), or None.
+    ep_number: str | None
+
+
+class EpisodeChoiceOut(BaseModel):
+    ep_number: str
+    title: str | None
+
+
+class UnassignedGroupOut(BaseModel):
+    anime_id: int
+    title: str
+    files: list[UnassignedFileOut]
+    episodes: list[EpisodeChoiceOut]
+
+
+@router.get("/unassigned-files", response_model=list[UnassignedGroupOut])
+async def list_unassigned_files(session: AsyncSession = Depends(get_db)) -> list[UnassignedGroupOut]:
+    """Video files that couldn't be matched to an episode, grouped by anime,
+    each with that anime's episode list to pick the right one from. Assigning
+    goes through PATCH /animes/{id}/episodes/{episode_id}."""
+    repo = CompletenessRepo(session)
+    groups: dict[int, UnassignedGroupOut] = {}
+    for episode, title in await repo.unassigned_files():
+        group = groups.setdefault(
+            episode.anime_id, UnassignedGroupOut(anime_id=episode.anime_id, title=title, files=[], episodes=[])
+        )
+        group.files.append(
+            UnassignedFileOut(episode_id=episode.id, file_name=Path(episode.file_path).name, ep_number=episode.ep_number)
+        )
+    choices = await repo.episode_choices(list(groups))
+    for anime_id, group in groups.items():
+        group.episodes = [EpisodeChoiceOut(ep_number=e.ep_number, title=e.title) for e in choices.get(anime_id, [])]
+    return list(groups.values())
 
 
 class IdentifyRequest(BaseModel):

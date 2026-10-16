@@ -18,13 +18,25 @@ from pathlib import Path
 # release-filename shapes.
 
 _BRACKET_GROUP = re.compile(r"\[[^\]]*\]")
+# An episode number alone in square brackets: "Show [01][1080p]". Up to three
+# digits, so resolutions ([1080p]) and years don't count; CRCs have letters.
+_BRACKETED_NUMBER = re.compile(r"\[(\d{1,3})(?:v\d)?\]")
+# "01v3": episode 1, third version of the release.
+_VERSIONED_NUMBER = re.compile(r"^(\d{1,4})v\d$", re.IGNORECASE)
 _STRAY_BRACKET_CHARS = re.compile(r"[()\[\]{}]")
 _SEPARATORS = re.compile(r"[_\-]")
 _SEASON_EPISODE = re.compile(r"[Ss](?P<season>\d{1,2})[Ee](?P<ep>\d{1,4})")
-_EP_PREFIXED_TOKEN = re.compile(r"^[Ee][Pp]?(?:isode)?(?P<ep>\d{1,4})$")
-_SKIP_WORDS = {"ep", "epi", "episode"}
+# An episode number with its marker in one token: "E05", "Ep05", "Episode05",
+# "Ep.05", "Vol.01", "Folge3", "Part2", "#04".
+_EP_PREFIXED_TOKEN = re.compile(
+    r"^(?:e|ep|episode|vol|folge|part|#)\.?(?P<ep>\d{1,4})$", re.IGNORECASE
+)
+# The same markers as separate words ("Vol 01"): they belong to neither the
+# title nor the number.
+_SKIP_WORDS = {"ep", "ep.", "epi", "episode", "vol", "vol.", "folge", "part", "#"}
 _NOISE_TOKEN = re.compile(r"^(?:\d{3,4}p|[xh]26[45]|eng|jpn|ger|fre|sub|dub|raw)$", re.IGNORECASE)
-_SITE_TAG = re.compile(r"^\w+\.\w{2,4}$")
+# A leading "site.com"-style tag (letters after the dot, so "Vol.01" isn't one).
+_SITE_TAG = re.compile(r"^\w+\.[A-Za-z]{2,4}$")
 # A release year, not an episode: "Dororo (2019) - 01" must not parse as
 # episode 2019. Anime episode numbers never reach this range in practice,
 # while a year in the title is a common naming convention.
@@ -50,7 +62,11 @@ def parse_release_filename(filename: str) -> ParsedRelease:
             episode=str(int(season_ep_match.group("ep"))),
         )
 
-    tokens = [t for t in _SEPARATORS.sub(" ", stem).split() if t]
+    # "Show.Name.02" -- dots instead of spaces, common for scene releases.
+    if " " not in stem.strip() and stem.count(".") >= 2:
+        stem = stem.replace(".", " ")
+
+    tokens = [_VERSIONED_NUMBER.sub(r"\1", t) for t in _SEPARATORS.sub(" ", stem).split() if t]
     if tokens and _SITE_TAG.match(tokens[0]):
         tokens = tokens[1:]
 
@@ -65,7 +81,10 @@ def parse_release_filename(filename: str) -> ParsedRelease:
 
     episode_index = _episode_token_index(tokens)
     if episode_index is None:
-        return ParsedRelease(title=_title_from(tokens), season=None, episode=None)
+        # Last resort: the number may sit in brackets, which were dropped above.
+        bracketed = _BRACKETED_NUMBER.search(Path(filename).stem)
+        episode = str(int(bracketed.group(1))) if bracketed else None
+        return ParsedRelease(title=_title_from(tokens), season=None, episode=episode)
     return ParsedRelease(
         title=_title_from(tokens[:episode_index]),
         season=None,

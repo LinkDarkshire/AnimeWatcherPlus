@@ -5,6 +5,7 @@ import time
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.completeness import CompletenessRepo
 from app.db.repositories import AnimeRepo
 from app.services import sorter
 from app.services.jobs import EventBus
@@ -43,6 +44,7 @@ async def _compute_total(session: AsyncSession) -> int:
         + await anime_repo.count_duplicate_groups()
         + await sorter.count_sort_queue(session)
         + await sorter.count_rename_queue(session)
+        + await CompletenessRepo(session).count_unassigned_files()
     )
 
 

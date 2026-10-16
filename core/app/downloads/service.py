@@ -33,6 +33,7 @@ from app.downloads.base import (
 )
 from app.downloads.registry import DownloadPluginRegistry, kind_of
 from app.services import wishlist
+from app.services.sorter import sanitize_filename_component
 
 logger = structlog.get_logger(__name__)
 
@@ -258,7 +259,10 @@ class Target:
 
     @property
     def package_name(self) -> str:
-        return f"{self.title} - {self.episode:02d}" if self.episode is not None else self.title
+        """Readable name for the download, also used as a folder name by some
+        clients -- so without characters like ? or * that folders can't have."""
+        name = f"{self.title} - {self.episode:02d}" if self.episode is not None else self.title
+        return sanitize_filename_component(name)
 
 
 async def resolve_target(

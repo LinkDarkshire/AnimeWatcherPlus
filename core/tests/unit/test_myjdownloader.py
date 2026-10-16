@@ -147,3 +147,45 @@ async def test_status_reads_download_list_and_linkgrabber() -> None:
     assert statuses["Show - 02"].state == "finished"
     assert statuses["Show - 03"].state == "queued"
     assert "Show - 04" not in statuses
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_status_finds_packages_jdownloader_renamed() -> None:
+    """JDownloader drops characters like ? and * from package names (they
+    can't be folder names). Downloads sent with such a name must still be
+    found -- by a tolerant name comparison, and for new downloads by link."""
+    server = FakeMyJD(devices=[{"id": "dev1", "name": "JD"}])
+    server.packages = {
+        "/downloadsV2/queryPackages": [
+            {"name": "1LDK + JK Ikinari Doukyo Micchaku Hatsu Ecchi - 08", "running": True,
+             "bytesLoaded": 10, "bytesTotal": 100},
+            {"name": "_ Kouhai - 11", "finished": True, "bytesLoaded": 5, "bytesTotal": 5},
+        ],
+        "/downloadsV2/queryLinks": [
+            {"url": "https://mega.nz/file/abc#key", "running": True, "bytesLoaded": 30, "bytesTotal": 60},
+        ],
+        "/linkgrabberv2/queryLinks": [{"url": "https://mega.nz/file/waiting#key"}],
+    }
+    respx.route(url__startswith=API_URL).mock(side_effect=server.handle)
+
+    old_style = ["1LDK + JK Ikinari Doukyo? Micchaku!? Hatsu Ecchi!!? - 08", "**** Kouhai - 11"]
+    by_link = json.dumps({"package": "Renamed by JD - 01", "link": "https://mega.nz/file/abc#key"})
+    waiting = json.dumps({"package": "Something - 02", "link": "https://mega.nz/file/waiting#key"})
+    statuses = await _client().status([*old_style, by_link, waiting])
+
+    assert statuses[old_style[0]].state == "downloading"
+    assert statuses[old_style[1]].state == "finished"
+    assert (statuses[by_link].state, statuses[by_link].progress) == ("downloading", 0.5)
+    assert statuses[waiting].state == "queued"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_add_returns_package_and_link_as_handle() -> None:
+    server = FakeMyJD(devices=[{"id": "dev1", "name": "JD"}])
+    respx.route(url__startswith=API_URL).mock(side_effect=server.handle)
+
+    handle = await _client().add("https://mega.nz/file/x#k", destination=None, package_name="Show - 01")
+
+    assert json.loads(handle) == {"package": "Show - 01", "link": "https://mega.nz/file/x#k"}

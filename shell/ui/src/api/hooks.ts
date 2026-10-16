@@ -26,6 +26,7 @@ import type {
   SortQueueItem,
   SortResolveResult,
   TagSummary,
+  UnassignedGroup,
   WantedResponse,
   WishlistCandidate,
   WishlistItem,
@@ -319,6 +320,7 @@ export function useUpdateEpisodeNumber() {
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["local-episodes", variables.animeId] })
       queryClient.invalidateQueries({ queryKey: ["missing-episodes", variables.animeId] })
+      queryClient.invalidateQueries({ queryKey: ["unassigned-files"] })
       queryClient.invalidateQueries({ queryKey: ["missing-episodes-overview"] })
       queryClient.invalidateQueries({ queryKey: ["animes"] })
       queryClient.invalidateQueries({ queryKey: ["rename-queue"] })
@@ -540,5 +542,21 @@ export function useAniDbStatus() {
       const data = query.state.data
       return data && (data.state !== "idle" || data.queued_jobs > 0) ? 5_000 : 30_000
     },
+  })
+}
+
+/** Video files that couldn't be matched to an episode, grouped by anime. */
+export function useUnassignedFiles() {
+  return useQuery({
+    queryKey: ["unassigned-files"],
+    queryFn: () => api.get<UnassignedGroup[]>("/api/v1/unassigned-files"),
+  })
+}
+
+/** Re-reads all folders on file level (no AniDB lookups for known anime).
+ * Runs in the background; results arrive through live events. */
+export function useMediaScan() {
+  return useMutation({
+    mutationFn: () => api.post<{ folders: number }>("/api/v1/maintenance/media-scan"),
   })
 }

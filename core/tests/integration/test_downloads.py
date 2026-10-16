@@ -448,3 +448,12 @@ async def test_qbittorrent_tags_downloads_and_reads_their_status() -> None:
     statuses = await client.status([tag, "awp-gone"])
     assert (statuses[tag].state, statuses[tag].progress, statuses[tag].eta_seconds) == ("downloading", 0.4, None)
     assert "awp-gone" not in statuses
+
+
+@pytest.mark.asyncio
+async def test_package_names_drop_characters_folders_cannot_have(db_session) -> None:
+    from app.downloads.service import Target
+
+    target = Target(title="**** Kouhai", titles=[], anidb_id=None, episode=11)
+    assert target.package_name == "Kouhai - 11"
+    assert Target(title='Doukyo? Micchaku!?', titles=[], anidb_id=None).package_name == "Doukyo Micchaku!"

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { useRepairScan, useRescanAll, useSettings, useUpdateSettings } from "@/api/hooks"
+import { useMediaScan, useRepairScan, useRescanAll, useSettings, useUpdateSettings } from "@/api/hooks"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
@@ -32,6 +32,7 @@ export function Settings() {
   const updateSettings = useUpdateSettings()
   const rescanAll = useRescanAll()
   const repairScan = useRepairScan()
+  const mediaScan = useMediaScan()
 
   const [threshold, setThreshold] = useState(String(DEFAULT_THRESHOLD_DAYS))
   const [enabled, setEnabled] = useState(true)
@@ -254,6 +255,21 @@ export function Settings() {
             <option value="ask">{t("settings.renameModeAsk")}</option>
             <option value="auto">{t("settings.renameModeAuto")}</option>
           </select>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="space-y-3 p-4">
+          <p className="text-sm font-medium">{t("settings.mediaScanTitle")}</p>
+          <p className="text-xs text-[hsl(var(--muted-foreground))]">{t("settings.mediaScanDescription")}</p>
+          <Button size="sm" variant="outline" onClick={() => mediaScan.mutate()} disabled={mediaScan.isPending}>
+            {mediaScan.isPending ? t("unassigned.mediaScanRunning") : t("unassigned.mediaScan")}
+          </Button>
+          {mediaScan.isSuccess && (
+            <p className="text-xs text-emerald-600">
+              {t("unassigned.mediaScanQueued", { count: mediaScan.data.folders })}
+            </p>
+          )}
         </CardContent>
       </Card>
 

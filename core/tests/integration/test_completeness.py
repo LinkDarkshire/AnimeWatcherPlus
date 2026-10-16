@@ -194,3 +194,55 @@ async def test_search_missing_only_filter(db_session, tmp_path) -> None:
     assert missing_total == 1
     assert [a.id for a in missing_items] == [incomplete.id]
     assert len(all_items) == 2
+
+
+async def _identified(db_session, tmp_path, name: str, expected: list[str], files: dict[str, str | None]):
+    from app.db.models import ExpectedEpisode, LocalEpisode
+    from app.db.repositories import AnimeRepo, FolderRepo
+
+    folder = await FolderRepo(db_session).create(str(tmp_path / f"root-{name}"), "content", name)
+    anime = await AnimeRepo(db_session).create_pending(folder.id, str(tmp_path / f"root-{name}" / name), name)
+    anime.ident_status = "identified"
+    for number in expected:
+        db_session.add(ExpectedEpisode(anime_id=anime.id, ep_number=number))
+    for file_name, number in files.items():
+        db_session.add(LocalEpisode(anime_id=anime.id, file_path=str(tmp_path / name / file_name), ep_number=number))
+    await db_session.commit()
+    return anime.id
+
+
+@pytest.mark.asyncio
+async def test_unassigned_files_are_the_ones_without_a_matching_episode(db_session, tmp_path) -> None:
+    from app.db.completeness import CompletenessRepo
+
+    kyouka = await _identified(
+        db_session, tmp_path, "Energy Kyouka!!", ["1", "2"],
+        {"Energy Kyouka!! Vol.01.mp4": None, "Energy Kyouka!! - 02.mp4": "2", "Extra - 13.mp4": "13"},
+    )
+    # No episode list at all: nothing to match against, so nothing reported.
+    await _identified(db_session, tmp_path, "No List", [], {"Whatever.mkv": None})
+
+    repo = CompletenessRepo(db_session)
+    unassigned = await repo.unassigned_files()
+
+    assert sorted(e.file_path.rsplit("/", 1)[-1] for e, _ in unassigned) == [
+        "Energy Kyouka!! Vol.01.mp4", "Extra - 13.mp4",
+    ]
+    assert await repo.count_unassigned_files() == 2
+    choices = await repo.episode_choices([kyouka])
+    assert [e.ep_number for e in choices[kyouka]] == ["1", "2"]
+
+
+@pytest.mark.asyncio
+async def test_lone_file_of_a_single_episode_anime_is_assigned(db_session, tmp_path) -> None:
+    from app.db.completeness import CompletenessRepo
+    from app.db.models import LocalEpisode
+
+    movie = await _identified(db_session, tmp_path, "Movie", ["1"], {"Movie.mkv": None})
+    series = await _identified(db_session, tmp_path, "Series", ["1", "2"], {"Series.mkv": None})
+    repo = CompletenessRepo(db_session)
+
+    assert await repo.assign_lone_file(movie) is True
+    assert await repo.assign_lone_file(series) is False  # could be either episode
+    [file] = (await db_session.execute(LocalEpisode.__table__.select().where(LocalEpisode.anime_id == movie))).all()
+    assert file.ep_number == "1"

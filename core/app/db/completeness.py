@@ -4,7 +4,7 @@ import datetime as dt
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import Integer, and_, cast, distinct, func, select
+from sqlalchemy import Integer, Select, and_, cast, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Anime, ExpectedEpisode, LocalEpisode
@@ -167,6 +167,98 @@ class CompletenessRepo:
             seen.add(key)
             result.append((anime_id, MissingEpisode(ep_number=ep_number, title=title, air_date=air_date)))
         return result
+
+    def _unassigned_query(self) -> Select[LocalEpisode, str]:
+        """Video files of identified anime that can't be matched to an
+        episode: no number could be read from the name, or the number isn't
+        one of the episodes AniDB lists. Only anime that have a numbered
+        episode list at all -- without one there is nothing to match against."""
+        has_numbered_episodes = (
+            select(ExpectedEpisode.id)
+            .where(ExpectedEpisode.anime_id == LocalEpisode.anime_id, _EXPECTED_IS_NUMBERED)
+            .exists()
+        )
+        matching_episode = (
+            select(ExpectedEpisode.id)
+            .where(
+                ExpectedEpisode.anime_id == LocalEpisode.anime_id,
+                _EXPECTED_IS_NUMBERED,
+                _is_plain_number(LocalEpisode.ep_number),
+                _LOCAL_NUMBER == _EXPECTED_NUMBER,
+            )
+            .exists()
+        )
+        return (
+            select(LocalEpisode, Anime.title)
+            .join(Anime, Anime.id == LocalEpisode.anime_id)
+            .where(
+                Anime.ident_status == "identified",
+                has_numbered_episodes,
+                ~matching_episode,
+                # Assigned by hand (to a special, or marked as an extra): settled.
+                LocalEpisode.manual_override.is_(False),
+            )
+        )
+
+    async def unassigned_files(self) -> list[tuple[LocalEpisode, str]]:
+        rows = (
+            await self.session.execute(
+                self._unassigned_query().order_by(Anime.title.collate("NOCASE"), LocalEpisode.file_path)
+            )
+        ).all()
+        return [(row[0], row[1]) for row in rows]
+
+    async def count_unassigned_files(self) -> int:
+        return (
+            await self.session.execute(select(func.count()).select_from(self._unassigned_query().subquery()))
+        ).scalar_one()
+
+    async def episode_choices(self, anime_ids: Sequence[int]) -> dict[int, list[MissingEpisode]]:
+        """Every episode AniDB lists per anime, for picking the right one by
+        hand: regular episodes in order first, then specials, credits and the
+        like (S1, C1, ...)."""
+        if not anime_ids:
+            return {}
+        rows = (
+            await self.session.execute(
+                select(ExpectedEpisode.anime_id, ExpectedEpisode.ep_number, ExpectedEpisode.title, ExpectedEpisode.air_date)
+                .where(ExpectedEpisode.anime_id.in_(anime_ids))
+                .order_by(ExpectedEpisode.anime_id, ExpectedEpisode.id)
+            )
+        ).all()
+        result: dict[int, list[MissingEpisode]] = {}
+        for anime_id, ep_number, title, air_date in rows:
+            number = str(int(ep_number)) if ep_number.isdigit() else ep_number
+            episodes = result.setdefault(anime_id, [])
+            if all(e.ep_number != number for e in episodes):
+                episodes.append(MissingEpisode(ep_number=number, title=title, air_date=air_date))
+        for episodes in result.values():
+            episodes.sort(key=lambda e: (0, int(e.ep_number), "") if e.ep_number.isdigit() else (1, 0, e.ep_number))
+        return result
+
+    async def assign_lone_file(self, anime_id: int) -> bool:
+        """A single video file whose name has no episode number, for an anime
+        AniDB lists exactly one episode of (a movie, a one-shot OVA): that
+        file can only be that episode. Returns whether a number was set."""
+        files = list(
+            (await self.session.execute(select(LocalEpisode).where(LocalEpisode.anime_id == anime_id))).scalars()
+        )
+        if len(files) != 1 or files[0].ep_number is not None or files[0].manual_override:
+            return False
+        numbers = list(
+            (
+                await self.session.execute(
+                    select(_EXPECTED_NUMBER)
+                    .where(ExpectedEpisode.anime_id == anime_id, _EXPECTED_IS_NUMBERED)
+                    .distinct()
+                )
+            ).scalars()
+        )
+        if len(numbers) != 1:
+            return False
+        files[0].ep_number = str(numbers[0])
+        await self.session.commit()
+        return True
 
     async def list_incomplete(self, page: int, size: int) -> tuple[list[tuple[Anime, int]], int]:
         """One page of the missing-episodes view: every identified anime with

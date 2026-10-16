@@ -406,3 +406,17 @@ export interface AniDbStatus {
   waiting_anime: number
   waiting_wishlist: number
 }
+
+/** Video files that couldn't be matched to an episode, for one anime. */
+export interface UnassignedGroup {
+  anime_id: number
+  title: string
+  files: {
+    episode_id: number
+    file_name: string
+    /** Read from the file name but not an episode AniDB lists, or null. */
+    ep_number: string | null
+  }[]
+  /** The anime's episodes to pick from. */
+  episodes: { ep_number: string; title: string | null }[]
+}
