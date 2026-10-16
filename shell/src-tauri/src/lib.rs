@@ -1,18 +1,27 @@
+mod connection;
+mod device;
+mod proxy;
+mod remote;
+mod server;
+#[cfg(test)]
+mod tests;
+
 use rand::RngCore;
-use serde::Serialize;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{Manager, RunEvent, State};
+use tauri::{Manager, RunEvent};
 
 #[cfg(debug_assertions)]
 use std::path::PathBuf;
 
 /// Starts and supervises the Python core: generates a per-session bearer
 /// token, starts the core on a random free port, waits for `/health`, and
-/// hands port and token to the frontend. Debug builds run the core with
+/// hands port and token to the frontend. With a server as the data source
+/// no core runs here; the UI talks to `proxy` instead (same port/token
+/// handshake). Debug builds run the core with
 /// `core/.venv`'s Python; release builds start the bundled PyInstaller
 /// executable (see core/core.spec).
 enum CoreChild {
@@ -36,12 +45,6 @@ impl CoreChild {
 
 struct CoreProcess {
     child: Mutex<Option<CoreChild>>,
-}
-
-#[derive(Serialize, Clone)]
-struct ConnectionInfo {
-    port: u16,
-    token: String,
 }
 
 fn find_free_port() -> u16 {
@@ -126,11 +129,6 @@ fn wait_for_health(port: u16, timeout: Duration) -> bool {
     false
 }
 
-#[tauri::command]
-fn get_connection_info(state: State<ConnectionInfo>) -> ConnectionInfo {
-    state.inner().clone()
-}
-
 /// Reveals an anime's directory in the OS's native file manager, so a
 /// misidentified/duplicate entry can be inspected or fixed by hand without
 /// re-typing its (often long, network-share) path.
@@ -186,7 +184,20 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .invoke_handler(tauri::generate_handler![get_connection_info, open_folder, open_url])
+        .invoke_handler(tauri::generate_handler![
+            open_folder,
+            open_url,
+            server::get_connection_info,
+            server::server_probe,
+            server::server_pair,
+            server::server_pair_status,
+            server::server_set_internet_url,
+            server::switch_mode,
+            server::server_forget,
+            server::server_pairing_call,
+            server::server_push_library,
+            server::server_pull_library,
+        ])
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -196,18 +207,44 @@ pub fn run() {
                 )?;
             }
 
-            // The core is started here because locating the bundled sidecar
-            // binary needs the AppHandle, which only exists from this point.
-            let port = find_free_port();
+            let config_dir = app.path().app_config_dir()?;
+            let cache_dir = app.path().app_cache_dir()?;
+            let config = connection::load(&connection::config_file(&config_dir));
+            let keys = std::sync::Arc::new(device::DeviceKeys::new(&config_dir));
+            let client = remote::http_client();
             let token = generate_token();
-            let child = spawn_core(app.handle(), port, &token);
-            if !wait_for_health(port, Duration::from_secs(20)) {
-                log::warn!("core did not answer /health within 20s; continuing anyway");
-            }
 
-            app.manage(ConnectionInfo { port, token });
+            let mut child = None;
+            let mut proxy_listener = None;
+            let port = match config.mode {
+                connection::Mode::Local => {
+                    // The core is started here because locating the bundled
+                    // sidecar binary needs the AppHandle, which only exists
+                    // from this point.
+                    let port = find_free_port();
+                    child = Some(spawn_core(app.handle(), port, &token));
+                    if !wait_for_health(port, Duration::from_secs(20)) {
+                        log::warn!("core did not answer /health within 20s; continuing anyway");
+                    }
+                    port
+                }
+                connection::Mode::Server => {
+                    // Bound here, so the port is known before the UI asks.
+                    let listener = TcpListener::bind("127.0.0.1:0")?;
+                    let port = listener.local_addr()?.port();
+                    proxy_listener = Some(listener);
+                    port
+                }
+            };
+
+            let shell = server::Shell::new(config_dir, cache_dir, config, keys, client, port, token.clone());
+            if let Some(listener) = proxy_listener {
+                let remote = shell.remote().map_err(|f| f.message)?;
+                tauri::async_runtime::spawn(proxy::serve(listener, remote, token));
+            }
+            app.manage(shell);
             app.manage(CoreProcess {
-                child: Mutex::new(Some(child)),
+                child: Mutex::new(child),
             });
 
             Ok(())

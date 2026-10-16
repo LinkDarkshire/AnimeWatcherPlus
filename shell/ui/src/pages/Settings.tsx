@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
 import { TitleOrderPicker } from "@/components/TitleOrderPicker"
+import { DataSourceSection } from "@/components/DataSourceSection"
+import { DevicesSection } from "@/components/DevicesSection"
 import { DEFAULT_TITLE_ORDER, normalizeTitleOrder, type TitleVariant } from "@/lib/titleOrder"
 import { useLanguage, useT } from "@/i18n/I18nContext"
 import { LANGUAGES, type Language } from "@/i18n/translations"
@@ -99,6 +101,9 @@ export function Settings() {
     <div className="mx-auto max-w-2xl space-y-6 p-4">
       <h1 className="text-lg font-semibold">{t("nav.settings")}</h1>
       {isLoading && <p className="text-sm text-[hsl(var(--muted-foreground))]">{t("common.loading")}</p>}
+
+      <DataSourceSection />
+      <DevicesSection />
 
       <Card>
         <CardContent className="space-y-3 p-4">

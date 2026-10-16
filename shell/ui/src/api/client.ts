@@ -107,12 +107,15 @@ export const api = {
 
 /** Resolves a server-relative path (e.g. the `poster_path` returned by
  * /api/v1/animes) against the Core's actual base URL, for use in places that
- * can't go through `api.get()` -- e.g. an <img src> can't attach the
- * Authorization header, which is why the poster route doesn't require one.
+ * can't go through `api.get()`. An <img src> can't attach the Authorization
+ * header, so the token goes into the query instead (needed when the data is
+ * on a server; the local core ignores it).
  */
 export async function resolveAssetUrl(path: string): Promise<string> {
-  const { baseUrl } = await getConnection()
-  return `${baseUrl}${path}`
+  const { baseUrl, token } = await getConnection()
+  if (!token) return `${baseUrl}${path}`
+  const separator = path.includes("?") ? "&" : "?"
+  return `${baseUrl}${path}${separator}token=${encodeURIComponent(token)}`
 }
 
 export async function wsUrl(): Promise<string> {
