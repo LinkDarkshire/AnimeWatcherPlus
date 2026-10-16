@@ -27,8 +27,9 @@ class Settings(BaseSettings):
     # sidecar token. "server": standalone (Docker), guarded by paired device
     # keys, with pairing on its own LAN-only port.
     mode: Literal["desktop", "server"] = "desktop"
-    api_port: int = 8000
-    pairing_port: int = 8001
+    # Uncommon ports on purpose: 8000/8080 are taken by many other containers.
+    api_port: int = 8784
+    pairing_port: int = 8785
     server_name: str = "AnimeWatcherPlus"
     # Extra allowed browser origins, comma separated (the app's own are built in).
     cors_origins: str = ""

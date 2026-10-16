@@ -15,12 +15,13 @@ COPY alembic ./alembic
 RUN pip install --no-cache-dir . \
     && mkdir -p /data /media
 
-# 8000: API, published through the reverse proxy.
-# 8001: pairing, LAN only -- never forward it.
-EXPOSE 8000 8001
+# 8784: API -- devices in the LAN connect to it directly, from the internet
+#       it's reached through the reverse proxy.
+# 8785: pairing, LAN only -- never forward it.
+EXPOSE 8784 8785
 VOLUME ["/data"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8784/health')"
 
 CMD ["python", "run.py", "--server"]

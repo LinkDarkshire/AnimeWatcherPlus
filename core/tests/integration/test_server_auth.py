@@ -15,7 +15,7 @@ from app.security.keys import auth_message
 from app.services.jobs import EventBus
 from app.state import AppState
 
-API, PAIR = "http://core:8000", "http://core:8001"
+API, PAIR = "http://core:8784", "http://core:8785"
 
 
 class Device:

@@ -6,7 +6,7 @@ shell starts, the same arguments in dev and frozen builds.
 
 Server: `run.py --server` (or AWP_MODE=server) -- listens on the API port
 and on the LAN-only pairing port (AWP_API_PORT / AWP_PAIRING_PORT, default
-8000 / 8001), one process serving both.
+8784 / 8785), one process serving both.
 """
 
 from __future__ import annotations

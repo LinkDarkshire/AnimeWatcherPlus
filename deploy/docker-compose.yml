@@ -1,10 +1,17 @@
 # AnimeWatcherPlus server -- example for a NAS next to SWAG (linuxserver.io).
 #
-#   1. Adjust the paths, the user and the LAN address below.
+#   1. Adjust the paths, the user and the LAN address below, and create
+#      ./data owned by that user (otherwise docker creates it as root and
+#      the server can't write to it).
 #   2. docker compose up -d
 #   3. docker logs animewatcherplus   -> shows the one-time setup code
-#   4. In the desktop app (in the same LAN): Settings -> Server ->
-#      "Connect", enter the server's LAN address and the setup code.
+#   4. Pair the desktop app from inside the LAN with the server's address
+#      and that code.
+#
+# How devices reach it:
+#   - at home (LAN):   directly, http://192.168.1.10:8784
+#   - from outside:    through SWAG, https://animewatcherplus.<your domain>
+#   - pairing (8785):  only in the LAN, never through SWAG or the router
 services:
   animewatcherplus:
     image: ghcr.io/linkdarkshire/animewatcherplus-server:latest
@@ -16,15 +23,13 @@ services:
       - TZ=Europe/Berlin
       - AWP_SERVER_NAME=AnimeWatcherPlus
     volumes:
-      - ./data:/data              # database, AniDB cache, plugins
+      - ./data:/data                # database, AniDB cache, plugins
       - /path/to/your/anime:/media  # add the folders in the app as /media/...
     ports:
-      # Pairing port: bound to the NAS's LAN address only and NOT forwarded
-      # by the router or the reverse proxy. New devices can only be added
-      # from inside the local network.
-      - "192.168.1.10:8001:8001"
-      # The API (8000) is not published: SWAG reaches it over the shared
-      # docker network below.
+      # Both bound to the NAS's LAN address only. Don't forward either in
+      # the router: the internet goes through SWAG (shared network below).
+      - "192.168.1.10:8784:8784"    # API, for devices in the LAN
+      - "192.168.1.10:8785:8785"    # pairing, LAN only
     networks:
       - swag
     restart: unless-stopped
