@@ -224,3 +224,17 @@ async def test_desktop_mode_has_no_pairing_and_keeps_its_token(db_session, tmp_p
         assert (await api.get("/api/v1/animes", headers={"Authorization": "Bearer secret"})).status_code == 200
         me = await api.get("/api/v1/auth/me", headers={"Authorization": "Bearer secret"})
         assert me.json()["mode"] == "desktop"
+
+
+@pytest.mark.asyncio
+async def test_import_and_export_only_for_admins_in_the_lan(server) -> None:
+    _, admin_token = await _setup_admin(server)
+    async with _client(server, API) as api, _client(server, PAIR) as pair:
+        auth = {"Authorization": f"Bearer {admin_token}"}
+        # Not reachable through the internet-facing API port at all.
+        assert (await api.get("/admin/export", headers=auth)).status_code == 404
+        assert (await api.post("/admin/import", headers=auth, content=b"x")).status_code == 404
+        # In the LAN: admin only.
+        assert (await pair.get("/admin/export")).status_code == 401
+        bad_mapping = await pair.post("/admin/import?mappings=nope", headers=auth, content=b"x")
+        assert bad_mapping.status_code == 422

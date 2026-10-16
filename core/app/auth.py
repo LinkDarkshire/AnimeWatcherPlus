@@ -88,8 +88,9 @@ class PortSeparationMiddleware:
             server = scope.get("server") or (None, None)
             on_pairing_port = server[1] == self.pairing_port
             path: str = scope["path"]
-            is_pairing_route = path == "/pair" or path.startswith("/pair/")
-            allowed = (is_pairing_route or path == "/health") if on_pairing_port else not is_pairing_route
+            # Pairing and administration (import/export) are LAN only.
+            is_lan_route = any(path == p or path.startswith(p + "/") for p in ("/pair", "/admin"))
+            allowed = (is_lan_route or path == "/health") if on_pairing_port else not is_lan_route
             if not allowed:
                 if scope["type"] == "websocket":
                     await send({"type": "websocket.close", "code": 4404})

@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from alembic import command
 from app import __version__
 from app.api import (
+    admin,
     anidb,
     animes,
     auth_api,
@@ -40,6 +41,7 @@ from app.providers.anidb_activity import anidb_status, waiting_counts
 from app.providers.base import ProviderRegistry
 from app.security import devices
 from app.services import pending_actions as pending_actions_service
+from app.services import snapshot
 from app.services import wishlist as wishlist_service
 from app.services.anidb_watch import AniDBBlockWatcher
 from app.services.jobs import EventBus, JobQueue
@@ -99,6 +101,14 @@ async def lifespan(app: FastAPI):
     # this point (including core_started below) silently stops reaching
     # logs/core.log.
     configure_logging(settings)
+    if settings.mode == "desktop":
+        # Switching back from a server leaves its snapshot here for us.
+        try:
+            imported = await asyncio.to_thread(snapshot.apply_pending_import, settings)
+            if imported is not None:
+                logger.info("pending_snapshot_applied", rows=imported.rows)
+        except snapshot.SnapshotError:
+            logger.exception("pending_snapshot_failed")
 
     event_bus = EventBus()
     # Must be wired before anything can publish: the nav badge's cached total
@@ -210,6 +220,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(ws.router)
     app.include_router(auth_api.router)
     app.include_router(auth_api.devices_router)
+    app.include_router(admin.router)
     if settings.mode == "server":
         app.include_router(pairing.router)
 
