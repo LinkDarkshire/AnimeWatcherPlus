@@ -11,12 +11,15 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from alembic import command
+from app import __version__
 from app.api import (
     anidb,
     animes,
+    auth_api,
     downloads,
     folders,
     maintenance,
+    pairing,
     pending_actions,
     rename_queue,
     settings_api,
@@ -27,14 +30,15 @@ from app.api import (
 )
 from app.api.animes import review_router
 from app.api.errors import register_error_handlers
-from app.auth import require_token
-from app.config import get_settings
+from app.auth import PortSeparationMiddleware, require_asset_access, require_auth
+from app.config import Settings, get_settings
 from app.db.session import session_scope
 from app.downloads.registry import build_registry
 from app.logging_config import configure_logging
 from app.providers.anidb import AniDBProvider
 from app.providers.anidb_activity import anidb_status, waiting_counts
 from app.providers.base import ProviderRegistry
+from app.security import devices
 from app.services import pending_actions as pending_actions_service
 from app.services import wishlist as wishlist_service
 from app.services.anidb_watch import AniDBBlockWatcher
@@ -62,6 +66,26 @@ def run_migrations() -> None:
     cfg = Config(str(CORE_DIR / "alembic.ini"))
     cfg.set_main_option("script_location", str(CORE_DIR / "alembic"))
     command.upgrade(cfg, "head")
+
+
+async def _announce_setup_code(state: AppState) -> None:
+    """Until an admin device is paired, the server prints a one-time setup
+    code to its log (`docker logs`). Whoever can read the server's log is
+    trusted to set it up."""
+    async with session_scope() as session:
+        if await devices.has_active_admin(session):
+            return
+    code = state.security.new_setup_code()
+    banner = (
+        "\n" + "=" * 60 + "\n"
+        "  AnimeWatcherPlus server -- first-time setup\n"
+        f"  Setup code: {code}\n"
+        f"  Enter it in the desktop app while in the server's local network\n"
+        f"  (pairing port {state.settings.pairing_port}). Valid until used.\n"
+        + "=" * 60
+    )
+    print(banner, flush=True)
+    logger.warning("server_setup_code_issued")
 
 
 @asynccontextmanager
@@ -124,6 +148,9 @@ async def lifespan(app: FastAPI):
         ],
     )
     block_watcher.start()
+
+    if settings.mode == "server":
+        await _announce_setup_code(app.state.awp)
     logger.info("core_started", data_dir=str(settings.data_dir))
 
     yield
@@ -133,16 +160,31 @@ async def lifespan(app: FastAPI):
     await job_queue.stop()
 
 
-def create_app() -> FastAPI:
-    app = FastAPI(title="AnimeWatcherPlus Core", version="0.2.0", lifespan=lifespan)
+# Where the app's own UI runs: the desktop shell on macOS/Linux and on
+# Windows/Android, plus the Vite dev server.
+_APP_ORIGINS = [
+    "tauri://localhost",
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
 
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = settings or get_settings()
+    app = FastAPI(title="AnimeWatcherPlus Core", version=__version__, lifespan=lifespan)
+
+    extra_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["tauri://localhost", "http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origins=_APP_ORIGINS + extra_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    if settings.mode == "server":
+        app.add_middleware(PortSeparationMiddleware, pairing_port=settings.pairing_port)
 
     register_error_handlers(app)
 
@@ -150,10 +192,11 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    protected = Depends(require_token)
+    protected = Depends(require_auth)
     app.include_router(folders.router, dependencies=[protected])
     app.include_router(animes.router, dependencies=[protected])
-    app.include_router(animes.public_router)  # no bearer auth: <img> can't send headers
+    # <img> can't send headers: in server mode the token comes as ?token=.
+    app.include_router(animes.public_router, dependencies=[Depends(require_asset_access)])
     app.include_router(review_router, dependencies=[protected])
     app.include_router(tags.router, dependencies=[protected])
     app.include_router(settings_api.router, dependencies=[protected])
@@ -165,6 +208,10 @@ def create_app() -> FastAPI:
     app.include_router(downloads.router, dependencies=[protected])
     app.include_router(anidb.router, dependencies=[protected])
     app.include_router(ws.router)
+    app.include_router(auth_api.router)
+    app.include_router(auth_api.devices_router)
+    if settings.mode == "server":
+        app.include_router(pairing.router)
 
     return app
 

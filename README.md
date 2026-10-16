@@ -227,7 +227,7 @@ und muss dazu passen.
 Für jeden Release:
 
 1. Version in `tauri.conf.json`, `Cargo.toml`, `core/pyproject.toml`,
-   `core/app/main.py` und `shell/ui/package.json` anheben.
+   `core/app/__init__.py` und `shell/ui/package.json` anheben.
 2. Auf `main` einen Tag setzen und pushen:
    ```bash
    git tag v0.2.0

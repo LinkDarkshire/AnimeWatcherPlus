@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from app.config import Settings
 from app.downloads.registry import DownloadPluginRegistry, build_registry
 from app.providers.base import ProviderRegistry
+from app.security.store import SecurityState
 from app.services.jobs import EventBus, JobQueue
 from app.services.scanner import ScannerService
 
@@ -18,3 +19,5 @@ class AppState:
     scanner: ScannerService
     # Built-ins only by default; main.py builds it with the plugins folder.
     download_plugins: DownloadPluginRegistry = field(default_factory=lambda: build_registry(None))
+    # Server mode only: sessions, login challenges, pairing codes.
+    security: SecurityState = field(default_factory=SecurityState)

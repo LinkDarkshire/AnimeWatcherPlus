@@ -38,7 +38,7 @@ def test_alembic_upgrade_head_from_empty(tmp_path, monkeypatch) -> None:
         conn.close()
 
     for expected in ("folder", "anime", "tag", "anidb_title_index", "anime_search_fts", "wishlist_entry",
-                     "download_integration", "download_request"):
+                     "download_integration", "download_request", "device"):
         assert expected in tables
 
 

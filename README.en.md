@@ -222,7 +222,7 @@ match it.
 For every release:
 
 1. Raise the version in `tauri.conf.json`, `Cargo.toml`, `core/pyproject.toml`,
-   `core/app/main.py` and `shell/ui/package.json`.
+   `core/app/__init__.py` and `shell/ui/package.json`.
 2. Tag `main` and push the tag:
    ```bash
    git tag v0.2.0

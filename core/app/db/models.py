@@ -252,3 +252,20 @@ class DownloadRequest(Base):
     # Hidden from the active-downloads list by the user.
     dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Device(Base):
+    """A device paired with a server-mode core. It proves who it is by
+    signing a challenge with its private key; only the public key is stored
+    here, so nothing in this table lets anyone log in."""
+
+    __tablename__ = "device"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String)
+    # Raw 32-byte Ed25519 public key, base64.
+    public_key: Mapped[str] = mapped_column(String, unique=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -1,0 +1,35 @@
+# AnimeWatcherPlus server -- example for a NAS next to SWAG (linuxserver.io).
+#
+#   1. Adjust the paths, the user and the LAN address below.
+#   2. docker compose up -d
+#   3. docker logs animewatcherplus   -> shows the one-time setup code
+#   4. In the desktop app (in the same LAN): Settings -> Server ->
+#      "Connect", enter the server's LAN address and the setup code.
+services:
+  animewatcherplus:
+    image: ghcr.io/linkdarkshire/animewatcherplus-server:latest
+    container_name: animewatcherplus
+    # The user the files on the NAS belong to (id -u / id -g), so the server
+    # can move and rename them.
+    user: "1000:1000"
+    environment:
+      - TZ=Europe/Berlin
+      - AWP_SERVER_NAME=AnimeWatcherPlus
+    volumes:
+      - ./data:/data              # database, AniDB cache, plugins
+      - /path/to/your/anime:/media  # add the folders in the app as /media/...
+    ports:
+      # Pairing port: bound to the NAS's LAN address only and NOT forwarded
+      # by the router or the reverse proxy. New devices can only be added
+      # from inside the local network.
+      - "192.168.1.10:8001:8001"
+      # The API (8000) is not published: SWAG reaches it over the shared
+      # docker network below.
+    networks:
+      - swag
+    restart: unless-stopped
+
+networks:
+  swag:
+    # The network your SWAG container is in.
+    external: true

@@ -86,3 +86,36 @@ jobs:
           releaseBody: "Windows: run the setup .exe. Linux: download the .AppImage, make it executable and start it. What's new: see the README."
           releaseDraft: true
           prerelease: false
+
+  # The server image (core in server mode) for Docker, e.g. on a NAS:
+  # ghcr.io/<owner>/animewatcherplus-server:<version> and :latest
+  server-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image name and version
+        id: meta
+        run: |
+          # The registry only accepts lowercase names.
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/animewatcherplus-server" >> "$GITHUB_OUTPUT"
+          echo "version=$(python3 -c 'import re;print(re.search(r"__version__ = \"(.+)\"", open("core/app/__init__.py").read())[1])')" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: core
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.image }}:latest
