@@ -5,13 +5,21 @@ import { cn } from "@/lib/utils"
 export const Dialog = DialogPrimitive.Root
 export const DialogTrigger = DialogPrimitive.Trigger
 
-export function DialogContent({ className, children, ...props }: DialogPrimitive.DialogContentProps) {
+export function DialogContent({
+  className,
+  children,
+  wide = false,
+  ...props
+}: DialogPrimitive.DialogContentProps & { wide?: boolean }) {
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50" />
       <DialogPrimitive.Content
         className={cn(
-          "fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-6 text-[hsl(var(--card-foreground))] shadow-lg",
+          // A margin to the screen edges on phones, scrolling if taller than the screen.
+          "fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 text-[hsl(var(--card-foreground))] shadow-lg sm:p-6",
+          // Width via the prop, not className: `cn` doesn't merge conflicting utilities.
+          wide ? "max-w-lg" : "max-w-md",
           className,
         )}
         {...props}

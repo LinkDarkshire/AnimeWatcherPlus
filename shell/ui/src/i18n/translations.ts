@@ -17,6 +17,8 @@ const de = {
   "nav.review": "Abfragen",
   "nav.folders": "Ordner",
   "nav.settings": "Einstellungen",
+  "nav.more": "Mehr",
+  "nav.missingShort": "Fehlend",
 
   "common.loading": "Lädt…",
   "common.cancel": "Abbrechen",
@@ -387,6 +389,8 @@ const en: Record<TranslationKey, string> = {
   "nav.review": "Requests",
   "nav.folders": "Folders",
   "nav.settings": "Settings",
+  "nav.more": "More",
+  "nav.missingShort": "Missing",
 
   "common.loading": "Loading…",
   "common.cancel": "Cancel",

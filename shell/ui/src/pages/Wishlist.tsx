@@ -126,14 +126,14 @@ function WishlistRow({
 
   return (
     <Card>
-      <CardContent className="flex items-center justify-between gap-3 p-3">
+      <CardContent className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
         <div className="min-w-0 space-y-0.5">
           {entry.library_anime_id ? (
-            <Link to={`/animes/${entry.library_anime_id}`} className="block truncate font-medium hover:underline">
+            <Link to={`/animes/${entry.library_anime_id}`} className="block font-medium hover:underline sm:truncate">
               {entry.title}
             </Link>
           ) : (
-            <p className="truncate font-medium">{entry.title}</p>
+            <p className="font-medium sm:truncate">{entry.title}</p>
           )}
           <p className="truncate text-xs text-[hsl(var(--muted-foreground))]">
             AniDB #{entry.anidb_id}
@@ -141,7 +141,7 @@ function WishlistRow({
             {details.length === 0 && entry.details_pending && ` · ${t("wishlist.detailsPending")}`}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center justify-between gap-2">
           {entry.library_anime_id ? (
             <Badge variant="default">{t("wishlist.inLibrary")}</Badge>
           ) : (

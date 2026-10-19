@@ -1,7 +1,8 @@
 import { useState } from "react"
 import { Link } from "react-router-dom"
 import { useDeleteAnime, useDuplicates, useIdentifyAnime } from "@/api/hooks"
-import { isTauri, openFolder } from "@/api/client"
+import { openFolder } from "@/api/client"
+import { useCanOpenFolders } from "@/api/shell"
 import { useAssetUrl } from "@/lib/useAssetUrl"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -19,6 +20,7 @@ function GroupPoster({ posterPath, title }: { posterPath: string | null; title: 
  * (delete that entry). */
 export function DuplicatesSection() {
   const t = useT()
+  const canOpenFolders = useCanOpenFolders()
   const { data: groups, isLoading } = useDuplicates()
   const identify = useIdentifyAnime()
   const deleteAnime = useDeleteAnime()
@@ -90,7 +92,7 @@ export function DuplicatesSection() {
                           {t("duplicates.changeId")}
                         </Button>
                       )}
-                      {isTauri() && (
+                      {canOpenFolders && (
                         <Button size="sm" variant="outline" onClick={() => openFolder(entry.directory_path)}>
                           {t("animeDetail.openFolder")}
                         </Button>

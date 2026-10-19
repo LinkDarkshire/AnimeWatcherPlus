@@ -138,3 +138,10 @@ export function useMe(enabled = true) {
     enabled,
   })
 }
+
+/** Folders can be shown in the file manager only in the desktop app with
+ * its own data -- with a server they are on the server, not on this machine. */
+export function useCanOpenFolders(): boolean {
+  const { data: connection } = useShellConnection()
+  return isTauri() && connection?.mode === "local"
+}

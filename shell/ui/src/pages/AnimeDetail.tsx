@@ -1,7 +1,8 @@
 import { Link, useNavigate, useParams } from "react-router-dom"
 import { useState } from "react"
 import { useAnime, useIdentifyAnime, useRefreshMetadata } from "@/api/hooks"
-import { isTauri, openFolder } from "@/api/client"
+import { openFolder } from "@/api/client"
+import { useCanOpenFolders } from "@/api/shell"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,6 +14,7 @@ import { useT } from "@/i18n/I18nContext"
 
 export function AnimeDetail() {
   const t = useT()
+  const canOpenFolders = useCanOpenFolders()
   const { id } = useParams()
   const animeId = id ? Number(id) : undefined
   const navigate = useNavigate()
@@ -33,20 +35,20 @@ export function AnimeDetail() {
         <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
           {t("animeDetail.back")}
         </Button>
-        {isTauri() && (
+        {canOpenFolders && (
           <Button variant="outline" size="sm" onClick={() => openFolder(anime.directory_path)}>
             {t("animeDetail.openFolder")}
           </Button>
         )}
       </div>
 
-      <div className="flex gap-4">
-        <div className="aspect-[2/3] w-40 shrink-0 overflow-hidden rounded-md bg-[hsl(var(--muted))]">
+      <div className="flex flex-col gap-4 sm:flex-row">
+        <div className="aspect-[2/3] w-40 shrink-0 self-center sm:self-start overflow-hidden rounded-md bg-[hsl(var(--muted))]">
           {posterUrl && (
             <img src={posterUrl} alt={anime.title} className="h-full w-full object-cover" />
           )}
         </div>
-        <div className="space-y-2">
+        <div className="min-w-0 space-y-2">
           <h1 className="text-xl font-semibold">{anime.title}</h1>
           {anime.original_title && (
             <p className="text-sm text-[hsl(var(--muted-foreground))]">{anime.original_title}</p>

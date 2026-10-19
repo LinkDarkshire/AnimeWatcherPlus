@@ -147,7 +147,7 @@ function AddDeviceDialog({ open, onClose }: { open: boolean; onClose: () => void
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent wide>
         <DialogHeader>
           <DialogTitle>{t("devices.addTitle")}</DialogTitle>
           <DialogDescription>{t("devices.addDescription")}</DialogDescription>

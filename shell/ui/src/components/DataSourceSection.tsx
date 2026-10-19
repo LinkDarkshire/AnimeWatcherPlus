@@ -251,7 +251,7 @@ function PairDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent wide>
         <DialogHeader>
           <DialogTitle>{t("dataSource.pairTitle")}</DialogTitle>
           <DialogDescription>{t("dataSource.pairDescription")}</DialogDescription>
@@ -436,7 +436,7 @@ function PushDialog({ open, server, onClose }: { open: boolean; server: ServerCo
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && !busy && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent wide>
         <DialogHeader>
           <DialogTitle>{t("dataSource.pushTitle", { name: server.name })}</DialogTitle>
           <DialogDescription>{t("dataSource.pushDescription")}</DialogDescription>
@@ -538,7 +538,7 @@ function LeaveDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && !busy && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent wide>
         <DialogHeader>
           <DialogTitle>{t("dataSource.leaveTitle")}</DialogTitle>
           <DialogDescription>
