@@ -21,6 +21,7 @@ shell/src-tauri/binaries/
 
 # Node / frontend (shell/ui/)
 shell/ui/node_modules/
+shell/node_modules/
 shell/ui/dist/
 shell/ui/.env.local
 

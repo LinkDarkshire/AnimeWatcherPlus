@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { api, ApiError, isTauri } from "./client"
 
-// The desktop shell's commands for connecting to a server
-// (shell/src-tauri/src/server.rs).
+// The app shell's commands for connecting to a server, QR codes and shared
+// posts (shell/src-tauri/src/server.rs).
 
 export type DataMode = "local" | "server"
 
@@ -15,6 +15,8 @@ export interface ServerConfig {
 }
 
 export interface ShellConnection {
+  /** Phones have no library of their own: always a server. */
+  platform: "desktop" | "mobile"
   port: number
   token: string
   /** The mode this run uses. */
@@ -114,6 +116,21 @@ export const shell = {
   pullLibrary: (mappings: PathMapping[]) => command<void>("server_pull_library", { mappings }),
   pairingCall: <T>(method: "GET" | "POST", path: string, body?: unknown) =>
     command<T>("server_pairing_call", { method, path, body: body ?? null }),
+  qrSvg: (text: string) => command<string>("qr_svg", { text }),
+  takeSharedText: () => command<string | null>("take_shared_text"),
+}
+
+export interface SharedPost {
+  text: string
+  source_url: string | null
+  suggestions: {
+    anidb_id: number
+    title: string
+    matched_title: string
+    score: number
+    in_library: boolean
+    on_wishlist: boolean
+  }[]
 }
 
 export async function restartApp(): Promise<void> {
@@ -144,4 +161,8 @@ export function useMe(enabled = true) {
 export function useCanOpenFolders(): boolean {
   const { data: connection } = useShellConnection()
   return isTauri() && connection?.mode === "local"
+}
+
+export function useIsMobile(): boolean {
+  return useShellConnection().data?.platform === "mobile"
 }

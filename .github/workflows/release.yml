@@ -2,7 +2,8 @@ name: Release
 
 # Builds the Windows installer and the Linux AppImage when a version tag is
 # pushed (e.g. `git tag v0.2.0 && git push origin v0.2.0`) and attaches both,
-# with their updater signatures and latest.json, to a draft GitHub release.
+# with their updater signatures and latest.json, to a draft GitHub release --
+# plus the Android APK and the server's Docker image (jobs below).
 # Check the draft, then publish it -- only published releases reach the
 # auto-updater.
 #
@@ -86,6 +87,70 @@ jobs:
           releaseBody: "Windows: run the setup .exe. Linux: download the .AppImage, make it executable and start it. What's new: see the README."
           releaseDraft: true
           prerelease: false
+
+  # The Android app (server connection only), signed with the release
+  # keystore and attached to the same draft release. Needs the secrets
+  # ANDROID_KEYSTORE_BASE64 (`base64 -w0 awp-release.jks`),
+  # ANDROID_KEYSTORE_PASSWORD and ANDROID_KEY_ALIAS; skipped without them.
+  android:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for the signing key
+        id: key
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret -- skipping the Android build."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-java@v4
+        if: steps.key.outputs.present == 'true'
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-node@v4
+        if: steps.key.outputs.present == 'true'
+        with:
+          node-version: "20"
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.key.outputs.present == 'true'
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - name: Build the signed APK
+        if: steps.key.outputs.present == 'true'
+        working-directory: shell
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          export NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          printf 'storeFile=%s\npassword=%s\nkeyAlias=%s\n' \
+            "$RUNNER_TEMP/release.jks" "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" \
+            > src-tauri/gen/android/keystore.properties
+          npm ci
+          npm --prefix ui ci
+          npm run tauri -- android build --apk --target aarch64 armv7
+
+      - name: Attach to the draft release
+        if: steps.key.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(python3 -c 'import json;print(json.load(open("shell/src-tauri/tauri.conf.json"))["version"])')
+          cp shell/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk \
+            "AnimeWatcherPlus_${version}_android.apk"
+          gh release upload "v${version}" "AnimeWatcherPlus_${version}_android.apk" --clobber
 
   # The server image (core in server mode) for Docker, e.g. on a NAS:
   # ghcr.io/<owner>/animewatcherplus-server:<version> and :latest

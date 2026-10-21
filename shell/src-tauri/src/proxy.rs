@@ -7,6 +7,7 @@
 //! happens here, invisibly.
 
 use crate::remote::{Failure, Remote};
+use crate::server::RemoteSlot;
 use axum::body::Body;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Request, State};
@@ -47,7 +48,7 @@ fn is_forwarded_response_header(name: &str) -> bool {
 
 #[derive(Clone)]
 struct Proxy {
-    remote: Arc<Remote>,
+    remote: RemoteSlot,
     token: Arc<String>,
 }
 
@@ -81,6 +82,13 @@ pub(crate) fn query_without_token(query: Option<&str>) -> String {
 }
 
 impl Proxy {
+    fn remote(&self) -> Result<Arc<Remote>, Failure> {
+        self.remote.lock().unwrap().clone().ok_or_else(|| Failure {
+            status: Some(503),
+            message: "Kein Server gekoppelt".into(),
+        })
+    }
+
     /// Bearer header, or ?token= for what can't send headers (<img>, WebSocket).
     fn authorized(&self, headers: &HeaderMap, query: Option<&str>) -> bool {
         let bearer = headers
@@ -116,15 +124,18 @@ async fn forward(State(proxy): State<Proxy>, request: Request) -> Response {
         return error_response(StatusCode::PAYLOAD_TOO_LARGE, "Anfrage zu groß");
     };
     let target = format!("{}{}", parts.uri.path(), query_without_token(query));
+    let remote = match proxy.remote() {
+        Ok(remote) => remote,
+        Err(failure) => return failure_response(failure),
+    };
 
     let mut retried = false;
     loop {
-        let session = match proxy.remote.session().await {
+        let session = match remote.session().await {
             Ok(session) => session,
             Err(failure) => return failure_response(failure),
         };
-        let mut upstream = proxy
-            .remote
+        let mut upstream = remote
             .client
             .request(parts.method.clone(), format!("{}{}", session.base, target))
             .bearer_auth(&session.token)
@@ -137,13 +148,13 @@ async fn forward(State(proxy): State<Proxy>, request: Request) -> Response {
         match upstream.send().await {
             // The token ran out early (e.g. the server restarted): log in again.
             Ok(response) if response.status() == StatusCode::UNAUTHORIZED && !retried => {
-                proxy.remote.invalidate(false).await;
+                remote.invalidate(false).await;
             }
             Ok(response) => return relay(response),
             // Never reached the server (e.g. left the LAN): pick the address
             // again. Only on connect errors -- anything later might have run.
             Err(err) if err.is_connect() && !retried => {
-                proxy.remote.invalidate(true).await;
+                remote.invalidate(true).await;
             }
             Err(err) => return failure_response(Failure::network(err)),
         }
@@ -178,9 +189,10 @@ async fn websocket(
 type Upstream = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn connect_upstream(proxy: &Proxy) -> Result<Upstream, String> {
+    let remote = proxy.remote()?;
     let mut retried = false;
     loop {
-        let session = proxy.remote.session().await?;
+        let session = remote.session().await?;
         let ws_base = if let Some(rest) = session.base.strip_prefix("https://") {
             format!("wss://{rest}")
         } else {
@@ -191,7 +203,7 @@ async fn connect_upstream(proxy: &Proxy) -> Result<Upstream, String> {
             Ok((stream, _)) => return Ok(stream),
             Err(err) if !retried => {
                 log::info!("server websocket refused ({err}); logging in again");
-                proxy.remote.invalidate(matches!(err, tokio_tungstenite::tungstenite::Error::Io(_))).await;
+                remote.invalidate(matches!(err, tokio_tungstenite::tungstenite::Error::Io(_))).await;
                 retried = true;
             }
             Err(err) => return Err(format!("server websocket: {err}")),
@@ -263,7 +275,7 @@ async fn relay_websocket(proxy: Proxy, client: WebSocket) {
 
 /// Serves the proxy on an already bound listener (bound by the caller, so
 /// the port is known before the UI asks for it).
-pub async fn serve(listener: std::net::TcpListener, remote: Arc<Remote>, token: String) {
+pub async fn serve(listener: std::net::TcpListener, remote: RemoteSlot, token: String) {
     let listener = match listener
         .set_nonblocking(true)
         .and_then(|()| tokio::net::TcpListener::from_std(listener))

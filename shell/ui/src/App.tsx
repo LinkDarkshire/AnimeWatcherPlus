@@ -21,6 +21,10 @@ import { Settings } from "@/pages/Settings"
 import { Wishlist } from "@/pages/Wishlist"
 import { Downloads } from "@/pages/Downloads"
 import { useLiveEvents } from "@/api/useLiveEvents"
+import { shell, useShellConnection } from "@/api/shell"
+import { MobileOnboarding } from "@/components/MobileOnboarding"
+import { ServerStatusBanner } from "@/components/ServerStatusBanner"
+import { useSharedText } from "@/lib/useSharedText"
 import { usePendingActionsCount } from "@/api/hooks"
 import { AniDbActivity } from "@/components/AniDbActivity"
 import { AniDbBanBanner } from "@/components/AniDbBanBanner"
@@ -43,7 +47,17 @@ interface NavItem {
 }
 
 function App() {
+  const { data: connection, isPending } = useShellConnection()
+  // In the app, wait for the shell to say where the data is.
+  if (shell.available() && isPending) return null
+  // A phone without a server has nothing to show but pairing.
+  if (connection?.platform === "mobile" && !connection.server) return <MobileOnboarding />
+  return <MainApp mobile={connection?.platform === "mobile"} />
+}
+
+function MainApp({ mobile }: { mobile: boolean }) {
   useLiveEvents()
+  useSharedText(mobile)
   const t = useT()
   const { data: pendingActions } = usePendingActionsCount()
   const pendingCount = pendingActions?.total ?? 0
@@ -89,6 +103,7 @@ function App() {
         </nav>
         <AniDbActivity />
       </header>
+      <ServerStatusBanner />
       <AniDbBanBanner />
       <EmptyFolderPrompt />
       <main className="flex-1 overflow-x-hidden overflow-y-auto">

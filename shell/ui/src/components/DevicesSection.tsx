@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useT } from "@/i18n/I18nContext"
+import { pairingQrText } from "@/lib/pairingQr"
 
 const POLL_MS = 2000
 const muted = "text-xs text-[hsl(var(--muted-foreground))]"
@@ -101,12 +102,18 @@ function AddDeviceDialog({ open, onClose }: { open: boolean; onClose: () => void
   const [asAdmin, setAsAdmin] = useState<Record<string, boolean>>({})
   const [error, setError] = useState<string | null>(null)
 
+  const { data: connection } = useShellConnection()
+  const lanUrl = connection?.server?.lan_url
+  const [qr, setQr] = useState<string | null>(null)
+
   const newCode = async () => {
     setError(null)
     try {
       const created = await shell.pairingCall<PairingCode>("POST", "/pair/codes")
       setCode(created)
       setExpiresAt(Date.now() + created.expires_in * 1000)
+      // For a phone to scan: the server's LAN address and the code.
+      setQr(lanUrl ? await shell.qrSvg(pairingQrText(lanUrl, created.code)) : null)
     } catch (e) {
       setError(errorMessage(e))
     }
@@ -115,6 +122,7 @@ function AddDeviceDialog({ open, onClose }: { open: boolean; onClose: () => void
   useEffect(() => {
     if (!open) return
     setCode(null)
+    setQr(null)
     setRequests([])
     setAsAdmin({})
     newCode()
@@ -156,6 +164,13 @@ function AddDeviceDialog({ open, onClose }: { open: boolean; onClose: () => void
         <div className="space-y-4">
           {code && (
             <div className="space-y-1 text-center">
+              {qr && secondsLeft > 0 && (
+                // SVG made by the app's own Rust side from the code above.
+                <div
+                  className="mx-auto w-56 rounded-md bg-white p-2 [&>svg]:h-auto [&>svg]:w-full"
+                  dangerouslySetInnerHTML={{ __html: qr }}
+                />
+              )}
               <p className="font-mono text-2xl tracking-widest">{code.code}</p>
               <p className={muted}>
                 {secondsLeft > 0

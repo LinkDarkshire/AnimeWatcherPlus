@@ -201,3 +201,59 @@ async def test_fetch_details_failure_leaves_entry_pending(test_engine, db_sessio
     [item] = await wishlist.list_items(db_session)
     assert item.details_pending is True
     assert item.title == "Fate/Zero"
+
+
+def test_shared_post_queries_quoted_titles_and_hashtags_first() -> None:
+    from app.services.shared_post import candidate_queries
+
+    queries = candidate_queries("New trailer for 「Fate/Zero」 out now!\n#AttackOnTitan #anime\nhttps://x.com/a/status/1")
+    assert queries[:3] == ["Fate/Zero", "Attack On Titan", "anime"]
+    assert "New trailer for 「Fate/Zero」 out now!" in queries
+    assert not any("https://" in q for q in queries)
+
+
+@pytest.mark.asyncio
+async def test_shared_x_post_is_fetched_and_matched(client, monkeypatch) -> None:
+    import httpx
+
+    from app.services import shared_post
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "publish.twitter.com"
+        assert request.url.params["url"] == "https://x.com/someone/status/123"
+        html = '<blockquote class="twitter-tweet"><p lang="en">Season 4 of Shingeki no Kyojin is great</p></blockquote>'
+        return httpx.Response(200, json={"html": html})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        shared_post.httpx, "AsyncClient", lambda **kwargs: real_client(transport=httpx.MockTransport(handler))
+    )
+    response = await client.post("/api/v1/wishlist/shared", json={"text": "https://x.com/someone/status/123?s=20"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source_url"] == "https://x.com/someone/status/123"
+    assert "Shingeki no Kyojin" in body["text"]
+    assert [s["anidb_id"] for s in body["suggestions"]][:1] == [100]
+
+
+@pytest.mark.asyncio
+async def test_shared_text_without_link_and_unreachable_x(client, monkeypatch) -> None:
+    import httpx
+
+    from app.services import shared_post
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503)
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        shared_post.httpx, "AsyncClient", lambda **kwargs: real_client(transport=httpx.MockTransport(handler))
+    )
+    plain = await client.post("/api/v1/wishlist/shared", json={"text": "Fate/Zero"})
+    assert [s["anidb_id"] for s in plain.json()["suggestions"]] == [200]
+
+    # X unreachable: still answers, with what was shared.
+    unreachable = await client.post("/api/v1/wishlist/shared", json={"text": "look https://x.com/a/status/9"})
+    assert unreachable.status_code == 200
+    assert unreachable.json()["text"] == "look"

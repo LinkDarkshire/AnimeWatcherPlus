@@ -23,7 +23,10 @@ export async function openFolder(path: string): Promise<void> {
 /** Opens a web page in the default browser (desktop shell) or a new tab
  * (browser dev mode). Only http(s) addresses. */
 export async function openExternal(url: string): Promise<void> {
-  if (isTauri()) {
+  if (isTauri() && navigator.userAgent.includes("Android")) {
+    const { openUrl } = await import("@tauri-apps/plugin-opener")
+    await openUrl(url)
+  } else if (isTauri()) {
     const { invoke } = await import("@tauri-apps/api/core")
     await invoke("open_url", { url })
   } else {

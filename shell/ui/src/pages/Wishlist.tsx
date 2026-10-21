@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react"
-import { Link } from "react-router-dom"
+import { Link, useLocation, useNavigate } from "react-router-dom"
+import { useQuery } from "@tanstack/react-query"
+import { api } from "@/api/client"
 import { useAddToWishlist, useRemoveFromWishlist, useWishlist, useWishlistSearch } from "@/api/hooks"
-import type { WishlistItem } from "@/api/types"
+import type { SharedPost } from "@/api/shell"
+import type { WishlistCandidate, WishlistItem } from "@/api/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -12,6 +15,10 @@ const SEARCH_DEBOUNCE_MS = 300
 
 export function Wishlist() {
   const t = useT()
+  const location = useLocation()
+  const navigate = useNavigate()
+  // Text shared to the app from another one (Android share sheet).
+  const shared = (location.state as { shared?: string } | null)?.shared
   const [input, setInput] = useState("")
   const [query, setQuery] = useState("")
 
@@ -32,6 +39,15 @@ export function Wishlist() {
         <h1 className="text-lg font-semibold">{t("wishlist.title")}</h1>
         <p className="text-sm text-[hsl(var(--muted-foreground))]">{t("wishlist.description")}</p>
       </div>
+
+      {shared && (
+        <SharedPostCard
+          text={shared}
+          adding={add.isPending}
+          onAdd={(anidbId) => add.mutate(anidbId)}
+          onDismiss={() => navigate(location.pathname, { replace: true, state: null })}
+        />
+      )}
 
       <Card>
         <CardContent className="space-y-3 p-4">
@@ -57,32 +73,12 @@ export function Wishlist() {
           {searching && (
             <div className="space-y-1.5">
               {search.data?.map((candidate) => (
-                <div
+                <CandidateRow
                   key={candidate.anidb_id}
-                  className="flex items-center justify-between gap-2 rounded border p-2 text-sm"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate font-medium">{candidate.title}</p>
-                    <p className="truncate text-xs text-[hsl(var(--muted-foreground))]">
-                      AniDB #{candidate.anidb_id}
-                      {candidate.matched_title !== candidate.title &&
-                        ` · ${t("wishlist.matchedVia", { title: candidate.matched_title })}`}
-                    </p>
-                  </div>
-                  {candidate.in_library ? (
-                    <Badge variant="outline">{t("wishlist.inLibrary")}</Badge>
-                  ) : candidate.on_wishlist ? (
-                    <Badge variant="outline">{t("wishlist.onWishlist")}</Badge>
-                  ) : (
-                    <Button
-                      size="sm"
-                      disabled={add.isPending}
-                      onClick={() => add.mutate(candidate.anidb_id)}
-                    >
-                      {t("wishlist.add")}
-                    </Button>
-                  )}
-                </div>
+                  candidate={candidate}
+                  adding={add.isPending}
+                  onAdd={() => add.mutate(candidate.anidb_id)}
+                />
               ))}
             </div>
           )}
@@ -153,6 +149,97 @@ function WishlistRow({
             {t("wishlist.remove")}
           </Button>
         </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function CandidateRow({
+  candidate,
+  adding,
+  onAdd,
+}: {
+  candidate: WishlistCandidate
+  adding: boolean
+  onAdd: () => void
+}) {
+  const t = useT()
+  return (
+    <div className="flex items-center justify-between gap-2 rounded border p-2 text-sm">
+      <div className="min-w-0">
+        <p className="truncate font-medium">{candidate.title}</p>
+        <p className="truncate text-xs text-[hsl(var(--muted-foreground))]">
+          AniDB #{candidate.anidb_id}
+          {candidate.matched_title !== candidate.title &&
+            ` · ${t("wishlist.matchedVia", { title: candidate.matched_title })}`}
+        </p>
+      </div>
+      {candidate.in_library ? (
+        <Badge variant="outline">{t("wishlist.inLibrary")}</Badge>
+      ) : candidate.on_wishlist ? (
+        <Badge variant="outline">{t("wishlist.onWishlist")}</Badge>
+      ) : (
+        <Button size="sm" className="shrink-0" disabled={adding} onClick={onAdd}>
+          {t("wishlist.add")}
+        </Button>
+      )}
+    </div>
+  )
+}
+
+/** A post shared to the app: its text (fetched from X if it was a link) and
+ * the anime titles the server recognized in it. */
+function SharedPostCard({
+  text,
+  adding,
+  onAdd,
+  onDismiss,
+}: {
+  text: string
+  adding: boolean
+  onAdd: (anidbId: number) => void
+  onDismiss: () => void
+}) {
+  const t = useT()
+  const post = useQuery({
+    queryKey: ["wishlist-shared", text],
+    queryFn: () => api.post<SharedPost>("/api/v1/wishlist/shared", { text }),
+  })
+
+  return (
+    <Card>
+      <CardContent className="space-y-3 p-4">
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-sm font-medium">{t("wishlist.sharedTitle")}</p>
+          <Button size="sm" variant="ghost" onClick={onDismiss}>
+            {t("downloads.close")}
+          </Button>
+        </div>
+        {post.isLoading && <p className="text-sm text-[hsl(var(--muted-foreground))]">{t("common.loading")}</p>}
+        {post.isError && <p className="text-sm text-red-500">{post.error.message}</p>}
+        {post.data && (
+          <>
+            {post.data.text && (
+              <p className="line-clamp-4 text-xs whitespace-pre-line text-[hsl(var(--muted-foreground))]">
+                {post.data.text}
+              </p>
+            )}
+            {post.data.suggestions.length === 0 ? (
+              <p className="text-sm">{t("wishlist.sharedNoMatch")}</p>
+            ) : (
+              <div className="space-y-1.5">
+                {post.data.suggestions.map((candidate) => (
+                  <CandidateRow
+                    key={candidate.anidb_id}
+                    candidate={candidate}
+                    adding={adding}
+                    onAdd={() => onAdd(candidate.anidb_id)}
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        )}
       </CardContent>
     </Card>
   )

@@ -1,4 +1,6 @@
 mod connection;
+#[cfg(desktop)]
+mod core_process;
 mod device;
 mod proxy;
 mod remote;
@@ -7,126 +9,14 @@ mod server;
 mod tests;
 
 use rand::RngCore;
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::process::Command;
-use std::sync::Mutex;
-use std::time::Duration;
-use tauri::{Manager, RunEvent};
-
-#[cfg(debug_assertions)]
-use std::path::PathBuf;
-
-/// Starts and supervises the Python core: generates a per-session bearer
-/// token, starts the core on a random free port, waits for `/health`, and
-/// hands port and token to the frontend. With a server as the data source
-/// no core runs here; the UI talks to `proxy` instead (same port/token
-/// handshake). Debug builds run the core with
-/// `core/.venv`'s Python; release builds start the bundled PyInstaller
-/// executable (see core/core.spec).
-enum CoreChild {
-    Dev(std::process::Child),
-    Sidecar(tauri_plugin_shell::process::CommandChild),
-}
-
-impl CoreChild {
-    fn kill(self) {
-        match self {
-            CoreChild::Dev(mut child) => {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
-            CoreChild::Sidecar(child) => {
-                let _ = child.kill();
-            }
-        }
-    }
-}
-
-struct CoreProcess {
-    child: Mutex<Option<CoreChild>>,
-}
-
-fn find_free_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind ephemeral port");
-    listener.local_addr().expect("no local addr").port()
-}
+use tauri::Manager;
 
 fn generate_token() -> String {
     let mut bytes = [0u8; 32]; // 256-bit random token
     rand::thread_rng().fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
-}
-
-#[cfg(debug_assertions)]
-fn core_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("core")
-}
-
-#[cfg(debug_assertions)]
-fn python_executable(core_dir: &std::path::Path) -> PathBuf {
-    if cfg!(windows) {
-        core_dir.join(".venv").join("Scripts").join("python.exe")
-    } else {
-        core_dir.join(".venv").join("bin").join("python")
-    }
-}
-
-#[cfg(debug_assertions)]
-fn spawn_core(_app: &tauri::AppHandle, port: u16, token: &str) -> CoreChild {
-    let core_dir = core_dir();
-    let python = python_executable(&core_dir);
-    let child = Command::new(python)
-        .args([
-            "-m",
-            "uvicorn",
-            "app.main:app",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            &port.to_string(),
-        ])
-        .current_dir(&core_dir)
-        .env("AWP_SIDECAR_TOKEN", token)
-        .spawn()
-        .expect("failed to spawn AnimeWatcherPlus core (is core/.venv set up? see README)");
-    CoreChild::Dev(child)
-}
-
-#[cfg(not(debug_assertions))]
-fn spawn_core(app: &tauri::AppHandle, port: u16, token: &str) -> CoreChild {
-    use tauri_plugin_shell::ShellExt;
-    let (_rx, child) = app
-        .shell()
-        .sidecar("core")
-        .expect("failed to resolve bundled core sidecar binary")
-        .args(["--host", "127.0.0.1", "--port", &port.to_string()])
-        .env("AWP_SIDECAR_TOKEN", token)
-        .spawn()
-        .expect("failed to spawn AnimeWatcherPlus core sidecar");
-    CoreChild::Sidecar(child)
-}
-
-/// Polls `/health` over a raw TCP connection (no extra HTTP-client dependency
-/// needed for a single GET) until the core answers or the timeout elapses.
-fn wait_for_health(port: u16, timeout: Duration) -> bool {
-    let deadline = std::time::Instant::now() + timeout;
-    while std::time::Instant::now() < deadline {
-        if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) {
-            let request = "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
-            if stream.write_all(request.as_bytes()).is_ok() {
-                let mut response = String::new();
-                if stream.read_to_string(&mut response).is_ok() && response.contains("200") {
-                    return true;
-                }
-            }
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-    false
 }
 
 /// Reveals an anime's directory in the OS's native file manager, so a
@@ -180,10 +70,17 @@ pub fn run() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_opener::init());
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build());
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
+
+    let app = builder
         .invoke_handler(tauri::generate_handler![
             open_folder,
             open_url,
@@ -197,6 +94,8 @@ pub fn run() {
             server::server_pairing_call,
             server::server_push_library,
             server::server_pull_library,
+            server::qr_svg,
+            server::take_shared_text,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
@@ -213,22 +112,26 @@ pub fn run() {
             let keys = std::sync::Arc::new(device::DeviceKeys::new(&config_dir));
             let client = remote::http_client();
             let token = generate_token();
+            // Phones have no core of their own: always a server, through the proxy.
+            let mode = if cfg!(mobile) { connection::Mode::Server } else { config.mode };
 
+            #[cfg(desktop)]
             let mut child = None;
             let mut proxy_listener = None;
-            let port = match config.mode {
+            let port = match mode {
+                #[cfg(desktop)]
                 connection::Mode::Local => {
                     // The core is started here because locating the bundled
                     // sidecar binary needs the AppHandle, which only exists
                     // from this point.
-                    let port = find_free_port();
-                    child = Some(spawn_core(app.handle(), port, &token));
-                    if !wait_for_health(port, Duration::from_secs(20)) {
+                    let port = core_process::find_free_port();
+                    child = Some(core_process::spawn_core(app.handle(), port, &token));
+                    if !core_process::wait_for_health(port, std::time::Duration::from_secs(20)) {
                         log::warn!("core did not answer /health within 20s; continuing anyway");
                     }
                     port
                 }
-                connection::Mode::Server => {
+                _ => {
                     // Bound here, so the port is known before the UI asks.
                     let listener = TcpListener::bind("127.0.0.1:0")?;
                     let port = listener.local_addr()?.port();
@@ -237,27 +140,31 @@ pub fn run() {
                 }
             };
 
-            let shell = server::Shell::new(config_dir, cache_dir, config, keys, client, port, token.clone());
+            let shell = server::Shell::new(config_dir, cache_dir, config, mode, keys, client, port, token.clone());
             if let Some(listener) = proxy_listener {
-                let remote = shell.remote().map_err(|f| f.message)?;
-                tauri::async_runtime::spawn(proxy::serve(listener, remote, token));
+                // Filled when a server is paired (on a phone possibly only later).
+                let _ = shell.remote();
+                tauri::async_runtime::spawn(proxy::serve(listener, shell.remote_slot(), token));
             }
             app.manage(shell);
-            app.manage(CoreProcess {
-                child: Mutex::new(child),
+            #[cfg(desktop)]
+            app.manage(core_process::CoreProcess {
+                child: std::sync::Mutex::new(child),
             });
 
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building tauri application")
-        .run(|app_handle, event| {
-            if let RunEvent::Exit = event {
-                let state = app_handle.state::<CoreProcess>();
-                let mut guard = state.child.lock().unwrap();
-                if let Some(child) = guard.take() {
-                    child.kill();
-                }
+        .expect("error while building tauri application");
+
+    app.run(|_app_handle, _event| {
+        #[cfg(desktop)]
+        if let tauri::RunEvent::Exit = _event {
+            let state = _app_handle.state::<core_process::CoreProcess>();
+            let mut guard = state.child.lock().unwrap();
+            if let Some(child) = guard.take() {
+                child.kill();
             }
-        });
+        }
+    });
 }

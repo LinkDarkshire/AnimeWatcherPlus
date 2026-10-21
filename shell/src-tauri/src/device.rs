@@ -1,8 +1,9 @@
-//! The device key a desktop app logs in to a server with: an Ed25519 key
-//! pair made on this machine. The server only ever sees the public half; the
-//! private half stays in the OS keyring (Windows Credential Manager, macOS
-//! Keychain, Secret Service on Linux), or -- where no keyring is available --
-//! in a file only this user can read. The UI never gets the key, only
+//! The device key the app logs in to a server with: an Ed25519 key pair made
+//! on this device. The server only ever sees the public half; the private
+//! half stays in the OS keyring (Windows Credential Manager, macOS Keychain,
+//! Secret Service on Linux), or -- where no keyring is available -- in a file
+//! only this user can read. On Android that file is in the app's private
+//! storage, which no other app can read. The UI never gets the key, only
 //! signatures over login challenges.
 
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -25,6 +26,7 @@ pub struct DeviceKeys {
     pending: Mutex<Option<SigningKey>>,
 }
 
+#[cfg(desktop)]
 /// Runs a keyring call on a thread of its own, with a Tokio runtime of its
 /// own: the Secret Service client needs one, and must not block (or nest
 /// into) the app's runtime.
@@ -42,8 +44,44 @@ fn off_thread<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
     .expect("keyring thread panicked")
 }
 
-fn keyring_entry() -> keyring::Result<keyring::Entry> {
-    keyring::Entry::new(SERVICE, ACCOUNT)
+#[cfg(desktop)]
+mod store {
+    use super::{off_thread, ACCOUNT, SERVICE};
+
+    fn entry() -> keyring::Result<keyring::Entry> {
+        keyring::Entry::new(SERVICE, ACCOUNT)
+    }
+
+    /// Ok(None): no key stored. Err: no usable keyring.
+    pub fn get() -> Result<Option<String>, String> {
+        match off_thread(|| entry().and_then(|e| e.get_password())) {
+            Ok(secret) => Ok(Some(secret)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    pub fn set(secret: String) -> Result<(), String> {
+        off_thread(move || entry().and_then(|e| e.set_password(&secret))).map_err(|e| e.to_string())
+    }
+
+    pub fn delete() {
+        let _ = off_thread(|| entry().and_then(|e| e.delete_credential()));
+    }
+}
+
+#[cfg(mobile)]
+mod store {
+    // No OS keyring here: the private file is the store (see the module docs).
+    pub fn get() -> Result<Option<String>, String> {
+        Err("no keyring on this platform".into())
+    }
+
+    pub fn set(_secret: String) -> Result<(), String> {
+        Err("no keyring on this platform".into())
+    }
+
+    pub fn delete() {}
 }
 
 fn decode(secret: &str) -> Option<SigningKey> {
@@ -88,11 +126,10 @@ impl DeviceKeys {
         if let Some(key) = cached.as_ref() {
             return Ok(key.clone());
         }
-        let from_keyring = match off_thread(|| keyring_entry().and_then(|e| e.get_password())) {
-            Ok(secret) => decode(&secret),
-            Err(keyring::Error::NoEntry) => None,
+        let from_keyring = match store::get() {
+            Ok(secret) => secret.and_then(|s| decode(&s)),
             Err(e) => {
-                log::warn!("keyring unavailable: {e}");
+                log::info!("keyring unavailable: {e}");
                 None
             }
         };
@@ -109,14 +146,13 @@ impl DeviceKeys {
 
     fn store(&self, key: &SigningKey) -> Result<(), String> {
         let secret = STANDARD.encode(key.to_bytes());
-        let to_store = secret.clone();
-        match off_thread(move || keyring_entry().and_then(|e| e.set_password(&to_store))) {
+        match store::set(secret.clone()) {
             Ok(()) => {
                 let _ = std::fs::remove_file(&self.fallback_file);
                 Ok(())
             }
             Err(e) => {
-                log::warn!("keyring unavailable, keeping the device key in a private file: {e}");
+                log::info!("keyring unavailable, keeping the device key in a private file: {e}");
                 write_private_file(&self.fallback_file, &secret)
             }
         }
@@ -146,7 +182,7 @@ impl DeviceKeys {
     pub fn forget(&self) {
         *self.key.lock().unwrap() = None;
         *self.pending.lock().unwrap() = None;
-        let _ = off_thread(|| keyring_entry().and_then(|e| e.delete_credential()));
+        store::delete();
         let _ = std::fs::remove_file(&self.fallback_file);
     }
 

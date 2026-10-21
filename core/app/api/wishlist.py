@@ -4,11 +4,11 @@ import datetime as dt
 from functools import partial
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_app_state, get_db
-from app.services import wishlist
+from app.services import shared_post, wishlist
 from app.state import AppState
 
 router = APIRouter(prefix="/api/v1/wishlist", tags=["wishlist"])
@@ -52,6 +52,27 @@ async def search_anime(
 ) -> list[WishlistCandidateOut]:
     """Title search against the local AniDB title dump (or an AniDB ID)."""
     return [WishlistCandidateOut(**vars(c)) for c in await wishlist.search(session, q)]
+
+
+class SharedIn(BaseModel):
+    text: str = Field(min_length=1, max_length=5000)
+
+
+class SharedOut(BaseModel):
+    text: str
+    source_url: str | None
+    suggestions: list[WishlistCandidateOut]
+
+
+@router.post("/shared", response_model=SharedOut)
+async def shared_post_suggestions(payload: SharedIn, session: AsyncSession = Depends(get_db)) -> SharedOut:
+    """Wishlist suggestions for a post shared to the app (e.g. from X)."""
+    post = await shared_post.resolve(session, payload.text)
+    return SharedOut(
+        text=post.text,
+        source_url=post.source_url,
+        suggestions=[WishlistCandidateOut(**vars(c)) for c in post.suggestions],
+    )
 
 
 @router.post("", response_model=WishlistItemOut, status_code=201)

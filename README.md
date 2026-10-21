@@ -206,11 +206,66 @@ gebautes AppImage läuft auf Systemen, die mindestens so neu sind wie der
 Container (Fedora 44); das AppImage aus den GitHub Releases wird auf Ubuntu
 22.04 gebaut und läuft auch auf älteren Systemen.
 
+## Server-Modus (Docker, z. B. auf dem NAS)
+
+Die Bibliothek kann statt in der Desktop-App auf einem Server liegen – dort,
+wo die Anime-Dateien sind. Desktop-Apps und die Android-App verbinden sich
+dann mit diesem Server; Einstellungen und Download-Plugins liegen zentral
+dort, der Scanner läuft dort.
+
+1. `deploy/docker-compose.yml` anpassen (LAN-IP des Servers, Medienordner)
+   und starten: `docker compose up -d`. Der Ordner `./data` muss dem
+   Container-Benutzer (1000:1000) gehören.
+2. Port **8784** ist die API, Port **8785** nur zum Koppeln von Geräten.
+   Beide nur ins Heimnetz freigeben; aus dem Internet geht nur 8784 über
+   den Reverse Proxy (Vorlage für SWAG: `deploy/swag/`).
+3. Beim ersten Start steht ein **Einrichtungscode** im Log
+   (`docker logs animewatcherplus`).
+4. In der Desktop-App unter *Einstellungen → Datenquelle → Mit Server
+   verbinden* die Server-Adresse und den Code eingeben – dieses Gerät wird
+   Admin. Danach lässt sich die lokale Bibliothek auf den Server übertragen
+   (mit Pfad-Zuordnung, z. B. `Z:\Anime` → `/media/Anime`) und umschalten.
+
+Es gibt keine Passwörter: Jedes Gerät hat einen eigenen Schlüssel
+(Ed25519, im Schlüsselbund des Systems) und meldet sich damit an. Neue
+Geräte werden nur im Heimnetz gekoppelt – mit einem Code, den ein
+Admin-Gerät unter *Einstellungen → Geräte* erzeugt, und nach dessen
+Freigabe. Ein widerrufenes Gerät verliert sofort den Zugriff.
+
+## Android-App
+
+Die Android-App zeigt die Bibliothek eines AnimeWatcherPlus-Servers (eine
+eigene lokale Bibliothek hat sie nicht). Die APK liegt den GitHub Releases
+bei.
+
+- **Koppeln:** im WLAN des Servers den QR-Code scannen, den ein Admin-Gerät
+  unter *Einstellungen → Geräte → Gerät hinzufügen* zeigt (oder Adresse und
+  Code eintippen), dann am Admin-Gerät freigeben. Unterwegs verbindet sich
+  die App über die Internet-Adresse, falls eingetragen.
+- **Teilen → Wunschliste:** einen Beitrag (z. B. auf X) über *Teilen* an
+  AnimeWatcherPlus schicken. Der Server holt den Text des Beitrags und
+  schlägt die darin erkannten Animes zum Hinzufügen vor.
+
+Selbst bauen (im Distrobox-Container; die Toolchain landet in `~/Android`):
+
+```bash
+./build_android.sh --setup     # einmalig, ~5 GB
+./build_android.sh             # Debug-APK
+./build_android.sh --release   # Release-APK (Signierung siehe Skriptkopf)
+```
+
 ## Release erstellen
 
 Releases baut GitHub automatisch (`.github/workflows/release.yml`): den
 Windows-Installer und das Linux-AppImage, beide signiert für den
-Auto-Updater, zusammen mit der `latest.json`.
+Auto-Updater, zusammen mit der `latest.json`; dazu die Android-APK und das
+Server-Image (`ghcr.io/<owner>/animewatcherplus-server`).
+
+Für die APK zusätzlich den Android-Signierschlüssel hinterlegen
+(`ANDROID_KEYSTORE_BASE64` = `base64 -w0 awp-release.jks`,
+`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`); ohne ihn wird die APK
+übersprungen. Den Schlüssel gut aufbewahren – Updates müssen mit demselben
+Schlüssel signiert sein.
 
 Einmalig: den Updater-Signierschlüssel erzeugen (bleibt außerhalb des Repos)
 und seinen **Inhalt** auf GitHub unter *Settings → Secrets and variables →

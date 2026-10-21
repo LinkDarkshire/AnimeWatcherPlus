@@ -1,6 +1,6 @@
-//! Commands for connecting the desktop app to a server: pairing, switching
-//! between local and server data, moving the library, and the admin's
-//! pairing-port calls (adding devices).
+//! Commands for connecting the app to a server: pairing, switching between
+//! local and server data (desktop), moving the library, the admin's
+//! pairing-port calls (adding devices), QR codes and shared posts.
 
 use crate::connection::{self, ConnectionConfig, Mode, ServerConfig};
 use crate::device::DeviceKeys;
@@ -15,6 +15,10 @@ use tokio::io::AsyncWriteExt;
 
 const DEFAULT_API_PORT: u16 = 8784;
 
+/// The session with the paired server, shared with the proxy. Empty while
+/// no server is paired (a phone before its first pairing).
+pub type RemoteSlot = Arc<Mutex<Option<Arc<Remote>>>>;
+
 /// Everything the connection commands share.
 pub struct Shell {
     pub config_dir: PathBuf,
@@ -27,7 +31,7 @@ pub struct Shell {
     /// Where the UI's requests go: the local core, or the proxy.
     pub port: u16,
     pub token: String,
-    remote: Mutex<Option<Arc<Remote>>>,
+    remote: RemoteSlot,
     pairing: tokio::sync::Mutex<Option<PendingPairing>>,
 }
 
@@ -43,6 +47,7 @@ impl Shell {
         config_dir: PathBuf,
         cache_dir: PathBuf,
         config: ConnectionConfig,
+        mode: Mode,
         keys: Arc<DeviceKeys>,
         client: reqwest::Client,
         port: u16,
@@ -51,13 +56,13 @@ impl Shell {
         Shell {
             config_dir,
             cache_dir,
-            mode: config.mode,
+            mode,
             config: Mutex::new(config),
             keys,
             client,
             port,
             token,
-            remote: Mutex::new(None),
+            remote: Arc::new(Mutex::new(None)),
             pairing: tokio::sync::Mutex::new(None),
         }
     }
@@ -80,6 +85,10 @@ impl Shell {
         Ok(created)
     }
 
+    pub fn remote_slot(&self) -> RemoteSlot {
+        self.remote.clone()
+    }
+
     fn update_config(&self, change: impl FnOnce(&mut ConnectionConfig)) -> Result<ConnectionConfig, Failure> {
         let mut config = self.config.lock().unwrap();
         let mut updated = config.clone();
@@ -90,17 +99,23 @@ impl Shell {
     }
 
     fn set_server(&self, server: Option<ServerConfig>) -> Result<(), Failure> {
-        let keep_session = self.mode == Mode::Server;
+        let on_server = self.mode == Mode::Server;
         self.update_config(|config| {
             config.server = server.clone();
-            if server.is_none() {
-                config.mode = Mode::Local;
+            if server.is_none() || cfg!(mobile) {
+                config.mode = if cfg!(mobile) { Mode::Server } else { Mode::Local };
             }
         })?;
         let mut remote = self.remote.lock().unwrap();
-        match (server, remote.as_ref()) {
-            // The running proxy keeps its session; it just learns the change.
-            (Some(server), Some(existing)) if keep_session => existing.update_server(server),
+        match server {
+            // The running proxy keeps its session; it just learns the change
+            // (e.g. a new internet address).
+            Some(server) if on_server => match remote.as_ref() {
+                Some(existing) => existing.update_server(server),
+                // A phone's first pairing: the proxy can start right away.
+                None => *remote = Some(Arc::new(Remote::new(server, self.keys.clone(), self.client.clone()))),
+            },
+            // Local data: made on first use (see `remote`).
             _ => *remote = None,
         }
         Ok(())
@@ -108,7 +123,15 @@ impl Shell {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Platform {
+    Desktop,
+    Mobile,
+}
+
+#[derive(Serialize)]
 pub struct ConnectionInfo {
+    platform: Platform,
     port: u16,
     token: String,
     /// The mode this run uses.
@@ -122,6 +145,7 @@ pub struct ConnectionInfo {
 pub fn get_connection_info(shell: State<Shell>) -> ConnectionInfo {
     let config = shell.config.lock().unwrap().clone();
     ConnectionInfo {
+        platform: if cfg!(mobile) { Platform::Mobile } else { Platform::Desktop },
         port: shell.port,
         token: shell.token.clone(),
         mode: shell.mode,
@@ -242,8 +266,8 @@ pub async fn server_pair(
         request_id: String,
         fingerprint: String,
     }
-    if shell.mode == Mode::Server {
-        return Err("Erst zur lokalen Bibliothek zurückwechseln".into());
+    if shell.config.lock().unwrap().server.is_some() {
+        return Err("Erst die bestehende Kopplung entfernen".into());
     }
     let public_key = shell.keys.begin_pairing();
     let payload = json!({ "code": code.trim().to_uppercase(), "name": device_name.trim(), "public_key": public_key });
@@ -346,6 +370,9 @@ pub fn server_set_internet_url(shell: State<Shell>, url: Option<String>) -> Resu
 /// Which data the next start uses. The UI restarts the app afterwards.
 #[tauri::command]
 pub fn switch_mode(shell: State<Shell>, mode: Mode) -> Result<(), Failure> {
+    if cfg!(mobile) && mode == Mode::Local {
+        return Err("Auf dem Handy gibt es keine lokale Bibliothek".into());
+    }
     if mode == Mode::Server && shell.config.lock().unwrap().server.is_none() {
         return Err("Kein Server gekoppelt".into());
     }
@@ -474,6 +501,9 @@ pub(crate) async fn push_library(shell: &Shell, mappings: Vec<PathMapping>, forc
 /// The current local library is kept as a backup file.
 #[tauri::command]
 pub async fn server_pull_library(shell: State<'_, Shell>, mappings: Vec<PathMapping>) -> Result<(), Failure> {
+    if cfg!(mobile) {
+        return Err("Auf dem Handy gibt es keine lokale Bibliothek".into());
+    }
     let data_dir = connection::core_data_dir().ok_or("Datenordner der App nicht gefunden")?;
     pull_library(&shell, mappings, &data_dir).await
 }
@@ -508,4 +538,28 @@ pub(crate) async fn pull_library(shell: &Shell, mappings: Vec<PathMapping>, data
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+// --- QR codes and shared posts ----------------------------------------------------
+
+/// A QR code as SVG, e.g. for pairing a phone (server address and code).
+#[tauri::command]
+pub fn qr_svg(text: String) -> Result<String, Failure> {
+    let code = qrcode::QrCode::new(text.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(code
+        .render::<qrcode::render::svg::Color>()
+        .min_dimensions(220, 220)
+        .quiet_zone(true)
+        .build())
+}
+
+/// Text another app shared to this one (Android share sheet), once. The
+/// activity stores it in the cache directory (MainActivity.kt).
+#[tauri::command]
+pub fn take_shared_text(shell: State<Shell>) -> Option<String> {
+    let file = shell.cache_dir.join("shared-text.txt");
+    let text = std::fs::read_to_string(&file).ok()?;
+    let _ = std::fs::remove_file(&file);
+    let text = text.trim().to_owned();
+    (!text.is_empty()).then_some(text)
 }

@@ -36,6 +36,23 @@ fn query_token_is_removed_before_forwarding() {
     assert_eq!(proxy::query_without_token(Some("page=2&token=x&q=a+b")), "?page=2&q=a+b");
 }
 
+#[tokio::test]
+async fn proxy_without_a_paired_server_says_so() {
+    // A phone before its first pairing: the proxy runs, but has nowhere to go.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(proxy::serve(listener, Arc::new(std::sync::Mutex::new(None)), "t".into()));
+    let response = http_client()
+        .get(format!("http://127.0.0.1:{port}/api/v1/animes"))
+        .bearer_auth("t")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 503);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["detail"], "Kein Server gekoppelt");
+}
+
 /// Against a running server container with a fresh data directory:
 /// AWP_E2E_SETUP_CODE=<code from its log> cargo test -- --ignored
 #[tokio::test(flavor = "multi_thread")]
@@ -87,7 +104,8 @@ async fn pairs_logs_in_and_proxies() {
     ));
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
-    tokio::spawn(proxy::serve(listener, remote.clone(), "local-token".into()));
+    let slot = Arc::new(std::sync::Mutex::new(Some(remote.clone())));
+    tokio::spawn(proxy::serve(listener, slot, "local-token".into()));
     let proxy = format!("http://127.0.0.1:{port}");
 
     let without = client.get(format!("{proxy}/api/v1/auth/me")).send().await.unwrap();
@@ -174,6 +192,7 @@ async fn pairs_logs_in_and_proxies() {
         snapshot_dir.clone(),
         snapshot_dir.clone(),
         config,
+        crate::connection::Mode::Local,
         keys.clone(),
         client.clone(),
         pairing_port,
