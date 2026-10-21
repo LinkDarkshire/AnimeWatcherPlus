@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import hmac
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from fastapi import HTTPException, Request, status
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.security.store import Session
 
@@ -99,3 +99,33 @@ class PortSeparationMiddleware:
                 await send({"type": "http.response.body", "body": b'{"detail":"Not Found"}'})
                 return
         await self.app(scope, receive, send)
+
+
+class SecurityHeadersMiddleware:
+    """Server mode: what browsers should never do with the API's answers --
+    guess content types, show them in frames, pass the address on, cache
+    them. The app itself doesn't need any of it."""
+
+    HEADERS: ClassVar[list[tuple[bytes, bytes]]] = [
+        (b"x-content-type-options", b"nosniff"),
+        (b"x-frame-options", b"DENY"),
+        (b"referrer-policy", b"no-referrer"),
+        (b"cache-control", b"no-store"),
+    ]
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                present = {name for name, _ in message.get("headers", [])}
+                extra = [(n, v) for n, v in self.HEADERS if n not in present]
+                message = {**message, "headers": [*message.get("headers", []), *extra]}
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)

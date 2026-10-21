@@ -31,7 +31,12 @@ from app.api import (
 )
 from app.api.animes import review_router
 from app.api.errors import register_error_handlers
-from app.auth import PortSeparationMiddleware, require_asset_access, require_auth
+from app.auth import (
+    PortSeparationMiddleware,
+    SecurityHeadersMiddleware,
+    require_asset_access,
+    require_auth,
+)
 from app.config import Settings, get_settings
 from app.db.session import session_scope
 from app.downloads.registry import build_registry
@@ -39,7 +44,7 @@ from app.logging_config import configure_logging
 from app.providers.anidb import AniDBProvider
 from app.providers.anidb_activity import anidb_status, waiting_counts
 from app.providers.base import ProviderRegistry
-from app.security import devices
+from app.security import devices, tls
 from app.services import pending_actions as pending_actions_service
 from app.services import snapshot
 from app.services import wishlist as wishlist_service
@@ -84,6 +89,7 @@ async def _announce_setup_code(state: AppState) -> None:
         f"  Setup code: {code}\n"
         f"  Enter it in the desktop app while in the server's local network\n"
         f"  (pairing port {state.settings.pairing_port}). Valid until used.\n"
+        f"  Server certificate: {tls.server_fingerprint(state.settings)[:16]}...\n"
         + "=" * 60
     )
     print(banner, flush=True)
@@ -195,6 +201,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     if settings.mode == "server":
         app.add_middleware(PortSeparationMiddleware, pairing_port=settings.pairing_port)
+        app.add_middleware(SecurityHeadersMiddleware)
 
     register_error_handlers(app)
 

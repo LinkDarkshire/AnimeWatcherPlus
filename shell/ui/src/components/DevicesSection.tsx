@@ -113,7 +113,8 @@ function AddDeviceDialog({ open, onClose }: { open: boolean; onClose: () => void
       setCode(created)
       setExpiresAt(Date.now() + created.expires_in * 1000)
       // For a phone to scan: the server's LAN address and the code.
-      setQr(lanUrl ? await shell.qrSvg(pairingQrText(lanUrl, created.code)) : null)
+      const cert = connection?.server?.tls_fingerprint ?? null
+      setQr(lanUrl ? await shell.qrSvg(pairingQrText(lanUrl, created.code, cert)) : null)
     } catch (e) {
       setError(errorMessage(e))
     }

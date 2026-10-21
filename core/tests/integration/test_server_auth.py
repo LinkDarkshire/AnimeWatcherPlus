@@ -11,11 +11,13 @@ from httpx import ASGITransport, AsyncClient
 from app.api.deps import get_db
 from app.config import Settings
 from app.main import create_app
+from app.security import tls
 from app.security.keys import auth_message
 from app.services.jobs import EventBus
 from app.state import AppState
 
 API, PAIR = "http://core:8784", "http://core:8785"
+PAIRING_PROOF_VECTOR = "m4cEA6CTmxd3dKZ2gFglM1kSzoiQ9w6GWJx6O+QIB3M="
 
 
 class Device:
@@ -29,6 +31,13 @@ class Device:
 
     def sign(self, device_id: int, nonce: str) -> str:
         return base64.b64encode(self.key.sign(auth_message(device_id, nonce))).decode()
+
+
+def _pairing(app, code: str, name: str, public_key: str, fingerprint: str | None = None) -> dict:
+    """What a device sends to pair: proof of the code, bound to the
+    certificate it saw (by default the server's own)."""
+    fingerprint = fingerprint or tls.server_fingerprint(app.state.awp.settings)
+    return {"proof": tls.pairing_proof(code, fingerprint, name, public_key), "name": name, "public_key": public_key}
 
 
 def _make_app(db_session, tmp_path, **settings):
@@ -73,7 +82,7 @@ async def _setup_admin(app) -> tuple[Device, str]:
     admin = Device("Desktop")
     code = app.state.awp.security.new_setup_code()
     async with _client(app, PAIR) as pair:
-        response = await pair.post("/pair/setup", json={"code": code, "name": admin.name, "public_key": admin.public_key})
+        response = await pair.post("/pair/setup", json=_pairing(app, code, admin.name, admin.public_key))
     assert response.status_code == 200, response.text
     admin.id = response.json()["device_id"]
     return admin, await _login(app, admin)
@@ -102,11 +111,11 @@ async def test_setup_code_pairs_one_admin_once(server) -> None:
     code = security.new_setup_code()
     device = Device("Desktop")
     async with _client(server, PAIR) as pair:
-        wrong = await pair.post("/pair/setup", json={"code": "AAAA-AAAA-AAAA", "name": "x", "public_key": device.public_key})
+        wrong = await pair.post("/pair/setup", json=_pairing(server, "AAAA-AAAA-AAAA", "x", device.public_key))
         assert wrong.status_code == 401
-        ok = await pair.post("/pair/setup", json={"code": code, "name": "Desktop", "public_key": device.public_key})
+        ok = await pair.post("/pair/setup", json=_pairing(server, code, "Desktop", device.public_key))
         assert ok.status_code == 200 and ok.json()["is_admin"] is True
-        again = await pair.post("/pair/setup", json={"code": code, "name": "y", "public_key": Device("y").public_key})
+        again = await pair.post("/pair/setup", json=_pairing(server, code, "y", Device("y").public_key))
         assert again.status_code == 409
 
 
@@ -116,8 +125,8 @@ async def test_setup_code_dies_after_too_many_wrong_guesses(server) -> None:
     device = Device("Desktop")
     async with _client(server, PAIR) as pair:
         for _ in range(5):
-            await pair.post("/pair/setup", json={"code": "WRONG", "name": "x", "public_key": device.public_key})
-        late = await pair.post("/pair/setup", json={"code": code, "name": "x", "public_key": device.public_key})
+            await pair.post("/pair/setup", json=_pairing(server, "WRONG", "x", device.public_key))
+        late = await pair.post("/pair/setup", json=_pairing(server, code, "x", device.public_key))
     assert late.status_code == 401
 
 
@@ -158,13 +167,13 @@ async def test_join_needs_code_and_admin_approval(server) -> None:
     phone = Device("Pixel")
     async with _client(server, PAIR) as pair:
         code = (await pair.post("/pair/codes", headers=auth)).json()["code"]
-        bad = await pair.post("/pair/join", json={"code": "NOPE-NOPE", "name": "Pixel", "public_key": phone.public_key})
+        bad = await pair.post("/pair/join", json=_pairing(server, "NOPE-NOPE", "Pixel", phone.public_key))
         assert bad.status_code == 401
-        joined = await pair.post("/pair/join", json={"code": code, "name": "Pixel", "public_key": phone.public_key})
+        joined = await pair.post("/pair/join", json=_pairing(server, code, "Pixel", phone.public_key))
         assert joined.status_code == 200
         request_id = joined.json()["request_id"]
         # The code was single use.
-        reuse = await pair.post("/pair/join", json={"code": code, "name": "x", "public_key": Device("x").public_key})
+        reuse = await pair.post("/pair/join", json=_pairing(server, code, "x", Device("x").public_key))
         assert reuse.status_code == 401
 
         assert (await pair.get(f"/pair/join/{request_id}")).json()["status"] == "pending"
@@ -187,7 +196,7 @@ async def test_revoked_device_is_out_at_once(server) -> None:
     async with _client(server, PAIR) as pair:
         code = (await pair.post("/pair/codes", headers=auth)).json()["code"]
         request_id = (
-            await pair.post("/pair/join", json={"code": code, "name": "Pixel", "public_key": phone.public_key})
+            await pair.post("/pair/join", json=_pairing(server, code, "Pixel", phone.public_key))
         ).json()["request_id"]
         phone.id = (await pair.post(f"/pair/requests/{request_id}", json={"approve": True}, headers=auth)).json()[
             "device_id"
@@ -238,3 +247,63 @@ async def test_import_and_export_only_for_admins_in_the_lan(server) -> None:
         assert (await pair.get("/admin/export")).status_code == 401
         bad_mapping = await pair.post("/admin/import?mappings=nope", headers=auth, content=b"x")
         assert bad_mapping.status_code == 422
+
+
+# --- certificate binding ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pairing_through_someone_elses_certificate_fails(server) -> None:
+    """A device that was talking to an impostor (who presents their own
+    certificate) proves the code for the wrong certificate: refused, even
+    though the code is right -- and the impostor never saw the code."""
+    code = server.state.awp.security.new_setup_code()
+    device = Device("Desktop")
+    impostor = "ab" * 32
+    async with _client(server, PAIR) as pair:
+        relayed = await pair.post("/pair/setup", json=_pairing(server, code, "Desktop", device.public_key, impostor))
+        assert relayed.status_code == 401
+        assert code not in relayed.text
+        direct = await pair.post("/pair/setup", json=_pairing(server, code, "Desktop", device.public_key))
+        assert direct.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_proof_covers_name_and_key(server) -> None:
+    code = server.state.awp.security.new_setup_code()
+    device = Device("Desktop")
+    payload = _pairing(server, code, "Desktop", device.public_key)
+    async with _client(server, PAIR) as pair:
+        renamed = await pair.post("/pair/setup", json={**payload, "name": "Evil"})
+        assert renamed.status_code == 401
+        swapped = await pair.post("/pair/setup", json={**payload, "public_key": Device("other").public_key})
+        assert swapped.status_code == 401
+
+
+def test_pairing_proof_vector() -> None:
+    """Fixed values, checked by the app's Rust implementation too
+    (shell/src-tauri/src/tls.rs)."""
+    proof = tls.pairing_proof(
+        "ABCD-EFGH",
+        "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+        "Pixel",
+        "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=",
+    )
+    assert proof == PAIRING_PROOF_VECTOR
+
+
+def test_server_certificate_is_made_once(tmp_path) -> None:
+    settings = Settings(data_dir=tmp_path, mode="server")
+    first = tls.server_fingerprint(settings)
+    cert, key = tls.cert_paths(settings)
+    assert cert.exists() and key.stat().st_mode & 0o777 == 0o600
+    assert tls.server_fingerprint(settings) == first and len(first) == 64
+
+
+@pytest.mark.asyncio
+async def test_server_answers_carry_security_headers(server) -> None:
+    async with _client(server, API) as api:
+        response = await api.get("/health")
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["cache-control"] == "no-store"

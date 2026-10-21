@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Literal
 
 import structlog
@@ -9,9 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_app_state, get_db
 from app.auth import require_admin
-from app.security import devices
+from app.security import devices, tls
 from app.security.keys import InvalidKey, normalize_public_key
-from app.security.store import JOIN_REQUEST_TTL_S
+from app.security.store import JOIN_REQUEST_TTL_S, MAX_JOIN_REQUESTS
 from app.state import AppState
 
 logger = structlog.get_logger(__name__)
@@ -33,7 +34,9 @@ class NewDevice(BaseModel):
 
 
 class SetupIn(NewDevice):
-    code: str
+    # Not the code itself: proof of knowing it, bound to the server
+    # certificate the device saw (app/security/tls.py).
+    proof: str = Field(max_length=100)
 
 
 class PairedOut(BaseModel):
@@ -47,7 +50,7 @@ class CodeOut(BaseModel):
 
 
 class JoinIn(NewDevice):
-    code: str
+    proof: str = Field(max_length=100)
 
 
 class JoinOut(BaseModel):
@@ -70,6 +73,22 @@ class PendingRequest(BaseModel):
 class Decision(BaseModel):
     approve: bool
     admin: bool = False
+
+
+# Checking a proof is slow on purpose; this keeps a flood of attempts from
+# tying up the server.
+_PROOF_CHECKS = asyncio.Semaphore(2)
+
+
+async def _code_for_proof(state: AppState, candidates: list[str], payload: NewDevice, key: str, proof: str) -> str:
+    """The open code the device proved it knows ("" if none -- which then
+    counts as a wrong attempt)."""
+    if not candidates:
+        return ""
+    fingerprint = tls.server_fingerprint(state.settings)
+    async with _PROOF_CHECKS:
+        matched = await asyncio.to_thread(tls.matching_code, candidates, proof, fingerprint, payload.name, key)
+    return matched or ""
 
 
 async def _checked_key(session: AsyncSession, public_key: str) -> str:
@@ -102,7 +121,9 @@ async def setup(
     if await devices.has_active_admin(session):
         raise HTTPException(status_code=409, detail="Der Server ist bereits eingerichtet")
     key = await _checked_key(session, payload.public_key)
-    if not state.security.use_setup_code(payload.code):
+    setup_code = state.security.setup_code
+    candidates = [setup_code.code] if setup_code else []
+    if not state.security.use_setup_code(await _code_for_proof(state, candidates, payload, key, payload.proof)):
         logger.warning("setup_code_rejected")
         raise HTTPException(status_code=401, detail="Einrichtungscode falsch oder abgelaufen")
     device = await devices.create_device(session, payload.name.strip(), key, is_admin=True)
@@ -125,7 +146,10 @@ async def join(
     """A new device asks to be paired. Needs a current pairing code, and an
     admin still has to approve it."""
     key = await _checked_key(session, payload.public_key)
-    if not state.security.use_pairing_code(payload.code):
+    if len(state.security.join_requests) >= MAX_JOIN_REQUESTS:
+        raise HTTPException(status_code=429, detail="Zu viele offene Anfragen -- später erneut versuchen")
+    candidates = state.security.open_pairing_codes()
+    if not state.security.use_pairing_code(await _code_for_proof(state, candidates, payload, key, payload.proof)):
         logger.warning("pairing_code_rejected", name=payload.name)
         raise HTTPException(status_code=401, detail="Kopplungscode falsch oder abgelaufen")
     request = state.security.new_join_request(payload.name.strip(), key)

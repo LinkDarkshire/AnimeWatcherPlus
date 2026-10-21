@@ -1,7 +1,7 @@
 use crate::connection::ServerConfig;
 use crate::device::DeviceKeys;
 use crate::remote::{http_client, Remote};
-use crate::{proxy, server};
+use crate::{proxy, server, tls};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use futures_util::StreamExt;
@@ -19,14 +19,29 @@ fn server_addresses_take_host_or_api_port() {
     let expect = |input: &str, lan: &str, pairing: &str| {
         assert_eq!(server::server_addresses(input).unwrap(), (lan.to_owned(), pairing.to_owned()), "{input}");
     };
-    expect("192.168.1.10", "http://192.168.1.10:8784", "http://192.168.1.10:8785");
-    expect(" nas.local:9000 ", "http://nas.local:9000", "http://nas.local:9001");
-    expect("http://192.168.1.10:8784/", "http://192.168.1.10:8784", "http://192.168.1.10:8785");
-    expect("[fd00::1]", "http://[fd00::1]:8784", "http://[fd00::1]:8785");
-    expect("[fd00::1]:8784", "http://[fd00::1]:8784", "http://[fd00::1]:8785");
+    expect("192.168.1.10", "https://192.168.1.10:8784", "https://192.168.1.10:8785");
+    expect(" nas.local:9000 ", "https://nas.local:9000", "https://nas.local:9001");
+    expect("https://192.168.1.10:8784/", "https://192.168.1.10:8784", "https://192.168.1.10:8785");
+    // An old-style http:// address still means the (now TLS) server.
+    expect("http://192.168.1.10:8784", "https://192.168.1.10:8784", "https://192.168.1.10:8785");
+    expect("[fd00::1]", "https://[fd00::1]:8784", "https://[fd00::1]:8785");
+    expect("[fd00::1]:8784", "https://[fd00::1]:8784", "https://[fd00::1]:8785");
     assert!(server::server_addresses("").is_err());
     assert!(server::server_addresses("user@host").is_err());
     assert!(server::server_addresses("host:abc").is_err());
+}
+
+#[test]
+fn pairing_proof_matches_the_server() {
+    // The same vector as core/tests/integration/test_server_auth.py.
+    let proof = tls::pairing_proof(
+        "abcd efgh",
+        "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+        " Pixel ",
+        "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=",
+    )
+    .unwrap();
+    assert_eq!(proof, "m4cEA6CTmxd3dKZ2gFglM1kSzoiQ9w6GWJx6O+QIB3M=");
 }
 
 #[test]
@@ -63,12 +78,22 @@ async fn pairs_logs_in_and_proxies() {
     let (lan_url, pairing_url) = server::server_addresses(&address).unwrap();
     let client = http_client();
     let key_dir = temp_dir();
-    let keys = Arc::new(DeviceKeys::new(&key_dir));
+    let keys = Arc::new(DeviceKeys::new(&key_dir, None));
+
+    // Finding the server: TLS with its own certificate, captured for pinning.
+    let (probe, verifier) = tls::capturing_client();
+    let info: Value = probe.get(format!("{pairing_url}/pair/info")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(info["setup_required"], true);
+    let fingerprint = verifier.seen().expect("certificate seen");
+    // Any other certificate is refused once pinned.
+    let impostor = tls::pinned_client(&"00".repeat(32)).get(format!("{pairing_url}/pair/info")).send().await;
+    assert!(impostor.is_err());
 
     let public_key = keys.begin_pairing();
-    let paired: Value = client
+    let proof = tls::pairing_proof(&code, &fingerprint, "e2e", &public_key).unwrap();
+    let paired: Value = tls::pinned_client(&fingerprint)
         .post(format!("{pairing_url}/pair/setup"))
-        .json(&json!({ "code": code, "name": "e2e", "public_key": public_key }))
+        .json(&json!({ "proof": proof, "name": "e2e", "public_key": public_key }))
         .send()
         .await
         .unwrap()
@@ -98,9 +123,9 @@ async fn pairs_logs_in_and_proxies() {
             pairing_url: pairing_url.clone(),
             internet_url: None,
             device_id,
+            tls_fingerprint: Some(fingerprint.clone()),
         },
         keys.clone(),
-        client.clone(),
     ));
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -169,7 +194,8 @@ async fn pairs_logs_in_and_proxies() {
 
     // An admin's pairing-port call with the same session.
     let session = remote.session().await.unwrap();
-    let pairing_code: Value = client
+    let pairing_code: Value = remote
+        .lan_client()
         .post(format!("{pairing_url}/pair/codes"))
         .bearer_auth(&session.token)
         .send()
@@ -180,14 +206,40 @@ async fn pairs_logs_in_and_proxies() {
         .unwrap();
     assert_eq!(pairing_code["code"].as_str().unwrap().chars().filter(char::is_ascii_alphanumeric).count(), 8);
 
-    // Moving the library: the "local core" here is the server's own LAN
-    // port, so export and import both stream through the shell's code.
+    // Moving the library. Server -> local first: the snapshot the local
+    // core would take over on its next start.
     let snapshot_dir = temp_dir();
     let config = crate::connection::ConnectionConfig {
         mode: crate::connection::Mode::Local,
         server: Some(remote.server()),
     };
-    let pairing_port: u16 = pairing_url.rsplit(':').next().unwrap().parse().unwrap();
+    let data_dir = temp_dir();
+    // Local -> server: a stand-in for the local core serves that snapshot
+    // as its export, and the shell uploads it to the server.
+    let export = std::fs::read({
+        let shell = server::Shell::new(
+            snapshot_dir.clone(),
+            snapshot_dir.clone(),
+            config.clone(),
+            crate::connection::Mode::Local,
+            keys.clone(),
+            client.clone(),
+            0,
+            String::new(),
+        );
+        server::pull_library(&shell, vec![], &data_dir).await.unwrap();
+        data_dir.join("pending-import.zip")
+    })
+    .unwrap();
+    assert_eq!(&export[..2], b"PK");
+    assert_eq!(std::fs::read_to_string(data_dir.join("pending-import.json")).unwrap(), "[]");
+
+    let local_core = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let local_port = local_core.local_addr().unwrap().port();
+    local_core.set_nonblocking(true).unwrap();
+    let app = axum::Router::new().route("/admin/export", axum::routing::get(move || async move { export.clone() }));
+    let local_core = tokio::net::TcpListener::from_std(local_core).unwrap();
+    tokio::spawn(async move { axum::serve(local_core, app).await });
     let shell = server::Shell::new(
         snapshot_dir.clone(),
         snapshot_dir.clone(),
@@ -195,8 +247,8 @@ async fn pairs_logs_in_and_proxies() {
         crate::connection::Mode::Local,
         keys.clone(),
         client.clone(),
-        pairing_port,
-        session.token.clone(),
+        local_port,
+        "local".into(),
     );
     let refused = server::push_library(&shell, vec![], false).await.unwrap_err();
     assert_eq!(refused.status, Some(409), "{}", refused.message);
@@ -209,12 +261,6 @@ async fn pairs_logs_in_and_proxies() {
     .unwrap();
     assert!(imported["rows"].as_u64().unwrap() > 0, "{imported}");
     assert!(!snapshot_dir.join("upload-snapshot.zip").exists());
-
-    let data_dir = temp_dir();
-    server::pull_library(&shell, vec![], &data_dir).await.unwrap();
-    let zip = std::fs::read(data_dir.join("pending-import.zip")).unwrap();
-    assert_eq!(&zip[..2], b"PK");
-    assert_eq!(std::fs::read_to_string(data_dir.join("pending-import.json")).unwrap(), "[]");
 
     keys.forget();
 }

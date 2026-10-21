@@ -81,7 +81,9 @@ export function PairWizard({ onDone, canScan = false }: { onDone: () => void; ca
       if (!qr) throw new Error(t("dataSource.qrInvalid"))
       setAddress(qr.server)
       setCode(qr.code)
-      setProbe(await shell.probe(qr.server))
+      const found = await shell.probe(qr.server)
+      if (qr.cert && qr.cert !== found.tls_fingerprint) throw new Error(t("dataSource.certMismatch"))
+      setProbe(found)
     })
 
   const pair = () =>
@@ -91,6 +93,7 @@ export function PairWizard({ onDone, canScan = false }: { onDone: () => void; ca
         lanUrl: probe.lan_url,
         pairingUrl: probe.pairing_url,
         serverName: probe.server_name,
+        tlsFingerprint: probe.tls_fingerprint,
         deviceName: deviceName.trim(),
         code,
         setup: probe.setup_required,

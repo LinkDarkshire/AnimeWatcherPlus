@@ -5,6 +5,7 @@
 use crate::connection::{self, ConnectionConfig, Mode, ServerConfig};
 use crate::device::DeviceKeys;
 use crate::remote::{check, read_json, Failure, Remote};
+use crate::tls;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -37,6 +38,7 @@ pub struct Shell {
 
 struct PendingPairing {
     name: String,
+    tls_fingerprint: String,
     lan_url: String,
     pairing_url: String,
     request_id: String,
@@ -80,7 +82,7 @@ impl Shell {
             .server
             .clone()
             .ok_or("Kein Server gekoppelt")?;
-        let created = Arc::new(Remote::new(server, self.keys.clone(), self.client.clone()));
+        let created = Arc::new(Remote::new(server, self.keys.clone()));
         *remote = Some(created.clone());
         Ok(created)
     }
@@ -113,7 +115,7 @@ impl Shell {
             Some(server) if on_server => match remote.as_ref() {
                 Some(existing) => existing.update_server(server),
                 // A phone's first pairing: the proxy can start right away.
-                None => *remote = Some(Arc::new(Remote::new(server, self.keys.clone(), self.client.clone()))),
+                None => *remote = Some(Arc::new(Remote::new(server, self.keys.clone()))),
             },
             // Local data: made on first use (see `remote`).
             _ => *remote = None,
@@ -177,7 +179,7 @@ pub(crate) fn server_addresses(address: &str) -> Result<(String, String), Failur
         _ => (authority, DEFAULT_API_PORT),
     };
     let pairing_port = port.checked_add(1).ok_or("Ungültiger Port")?;
-    Ok((format!("http://{host}:{port}"), format!("http://{host}:{pairing_port}")))
+    Ok((format!("https://{host}:{port}"), format!("https://{host}:{pairing_port}")))
 }
 
 #[derive(Serialize)]
@@ -187,11 +189,14 @@ pub struct Probe {
     setup_required: bool,
     lan_url: String,
     pairing_url: String,
+    /// The certificate the server presented; pinned when pairing (the
+    /// pairing proof makes sure it's really the server's).
+    tls_fingerprint: String,
 }
 
 /// Looks for a server at an address in the LAN.
 #[tauri::command]
-pub async fn server_probe(shell: State<'_, Shell>, address: String) -> Result<Probe, Failure> {
+pub async fn server_probe(address: String) -> Result<Probe, Failure> {
     #[derive(Deserialize)]
     struct Info {
         server_name: String,
@@ -199,9 +204,9 @@ pub async fn server_probe(shell: State<'_, Shell>, address: String) -> Result<Pr
         setup_required: bool,
     }
     let (lan_url, pairing_url) = server_addresses(&address)?;
+    let (client, verifier) = tls::capturing_client();
     let info: Info = read_json(
-        shell
-            .client
+        client
             .get(format!("{pairing_url}/pair/info"))
             .timeout(Duration::from_secs(5))
             .send()
@@ -214,12 +219,14 @@ pub async fn server_probe(shell: State<'_, Shell>, address: String) -> Result<Pr
         )),
         Some(_) => failure,
     })?;
+    let tls_fingerprint = verifier.seen().ok_or("Der Server hat kein Zertifikat vorgelegt")?;
     Ok(Probe {
         server_name: info.server_name,
         version: info.version,
         setup_required: info.setup_required,
         lan_url,
         pairing_url,
+        tls_fingerprint,
     })
 }
 
@@ -232,14 +239,15 @@ pub struct PairStatus {
 }
 
 impl Shell {
-    fn finish_pairing(&self, name: String, lan_url: String, pairing_url: String, device_id: i64) -> Result<(), Failure> {
+    fn finish_pairing(&self, request: PendingPairing, device_id: i64) -> Result<(), Failure> {
         self.keys.commit_pairing()?;
         self.set_server(Some(ServerConfig {
-            name,
-            lan_url,
-            pairing_url,
+            name: request.name,
+            lan_url: request.lan_url,
+            pairing_url: request.pairing_url,
             internet_url: None,
             device_id,
+            tls_fingerprint: Some(request.tls_fingerprint),
         }))
     }
 }
@@ -253,6 +261,7 @@ pub async fn server_pair(
     lan_url: String,
     pairing_url: String,
     server_name: String,
+    tls_fingerprint: String,
     device_name: String,
     code: String,
     setup: bool,
@@ -270,37 +279,50 @@ pub async fn server_pair(
         return Err("Erst die bestehende Kopplung entfernen".into());
     }
     let public_key = shell.keys.begin_pairing();
-    let payload = json!({ "code": code.trim().to_uppercase(), "name": device_name.trim(), "public_key": public_key });
+    let name = device_name.trim().to_owned();
+    // The code itself never leaves the device (see tls::pairing_proof).
+    let proof = {
+        let (fingerprint, name, public_key) = (tls_fingerprint.clone(), name.clone(), public_key.clone());
+        tokio::task::spawn_blocking(move || tls::pairing_proof(&code, &fingerprint, &name, &public_key))
+            .await
+            .map_err(|e| e.to_string())??
+    };
+    let payload = json!({ "proof": proof, "name": name, "public_key": public_key });
+    // From here on only the certificate the proof was made for.
+    let client = tls::pinned_client(&tls_fingerprint);
+    let request = PendingPairing {
+        name: server_name,
+        tls_fingerprint,
+        lan_url,
+        pairing_url,
+        request_id: String::new(),
+    };
     if setup {
         let paired: Paired = read_json(
-            shell
-                .client
-                .post(format!("{pairing_url}/pair/setup"))
+            client
+                .post(format!("{}/pair/setup", request.pairing_url))
                 .json(&payload)
                 .send()
                 .await,
         )
         .await?;
-        shell.finish_pairing(server_name, lan_url, pairing_url, paired.device_id)?;
+        shell.finish_pairing(request, paired.device_id)?;
         return Ok(PairStatus {
             status: "paired",
             fingerprint: None,
         });
     }
     let joined: Joined = read_json(
-        shell
-            .client
-            .post(format!("{pairing_url}/pair/join"))
+        client
+            .post(format!("{}/pair/join", request.pairing_url))
             .json(&payload)
             .send()
             .await,
     )
     .await?;
     *shell.pairing.lock().await = Some(PendingPairing {
-        name: server_name,
-        lan_url,
-        pairing_url,
         request_id: joined.request_id,
+        ..request
     });
     Ok(PairStatus {
         status: "pending",
@@ -319,8 +341,7 @@ pub async fn server_pair_status(shell: State<'_, Shell>) -> Result<PairStatus, F
     let mut pending = shell.pairing.lock().await;
     let request = pending.as_ref().ok_or("Keine Kopplung im Gange")?;
     let status: Status = read_json(
-        shell
-            .client
+        tls::pinned_client(&request.tls_fingerprint)
             .get(format!("{}/pair/join/{}", request.pairing_url, request.request_id))
             .send()
             .await,
@@ -329,7 +350,7 @@ pub async fn server_pair_status(shell: State<'_, Shell>) -> Result<PairStatus, F
     match (status.status.as_str(), status.device_id) {
         ("approved", Some(device_id)) => {
             let request = pending.take().expect("checked above");
-            shell.finish_pairing(request.name, request.lan_url, request.pairing_url, device_id)?;
+            shell.finish_pairing(request, device_id)?;
             Ok(PairStatus {
                 status: "paired",
                 fingerprint: None,
@@ -406,8 +427,8 @@ pub async fn server_pairing_call(
     };
     let remote = shell.remote()?;
     let session = remote.session().await?;
-    let mut request = shell
-        .client
+    let mut request = remote
+        .lan_client()
         .request(method, format!("{}{path}", remote.server().pairing_url))
         .bearer_auth(&session.token)
         .timeout(Duration::from_secs(10));
@@ -478,8 +499,8 @@ pub(crate) async fn push_library(shell: &Shell, mappings: Vec<PathMapping>, forc
         let length = file.metadata().await.map_err(|e| e.to_string())?.len();
         let mappings = serde_json::to_string(&mappings).map_err(|e| e.to_string())?;
         read_json(
-            shell
-                .client
+            remote
+                .lan_client()
                 .post(format!("{}/admin/import", remote.server().pairing_url))
                 .query(&[("mappings", mappings.as_str()), ("force", if force { "true" } else { "false" })])
                 .bearer_auth(&session.token)
@@ -512,8 +533,8 @@ pub(crate) async fn pull_library(shell: &Shell, mappings: Vec<PathMapping>, data
     let remote = shell.remote()?;
     let session = remote.session().await?;
     let export = check(
-        shell
-            .client
+        remote
+            .lan_client()
             .get(format!("{}/admin/export", remote.server().pairing_url))
             .bearer_auth(&session.token)
             .send()

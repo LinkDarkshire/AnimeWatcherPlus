@@ -37,6 +37,11 @@ url = "2"
 base64 = "0.22"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+webpki-roots = "1"
+sha2 = "0.10"
+hmac = "0.12"
+scrypt = { version = "0.11", default-features = false }
 
 # Desktop only: the bundled core (sidecar), the auto-updater and the OS keyring.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

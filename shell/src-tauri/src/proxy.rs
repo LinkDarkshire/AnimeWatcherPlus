@@ -135,7 +135,7 @@ async fn forward(State(proxy): State<Proxy>, request: Request) -> Response {
             Ok(session) => session,
             Err(failure) => return failure_response(failure),
         };
-        let mut upstream = remote
+        let mut upstream = session
             .client
             .request(parts.method.clone(), format!("{}{}", session.base, target))
             .bearer_auth(&session.token)
@@ -199,7 +199,15 @@ async fn connect_upstream(proxy: &Proxy) -> Result<Upstream, String> {
             format!("ws://{}", session.base.trim_start_matches("http://"))
         };
         let token: String = url::form_urlencoded::byte_serialize(session.token.as_bytes()).collect();
-        match tokio_tungstenite::connect_async(format!("{ws_base}/ws?token={token}")).await {
+        let connector = tokio_tungstenite::Connector::Rustls(session.tls.clone());
+        match tokio_tungstenite::connect_async_tls_with_config(
+            format!("{ws_base}/ws?token={token}"),
+            None,
+            false,
+            Some(connector),
+        )
+        .await
+        {
             Ok((stream, _)) => return Ok(stream),
             Err(err) if !retried => {
                 log::info!("server websocket refused ({err}); logging in again");

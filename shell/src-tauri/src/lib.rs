@@ -2,9 +2,12 @@ mod connection;
 #[cfg(desktop)]
 mod core_process;
 mod device;
+#[cfg(target_os = "android")]
+mod keyvault;
 mod proxy;
 mod remote;
 mod server;
+mod tls;
 #[cfg(test)]
 mod tests;
 
@@ -79,6 +82,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build());
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(keyvault::init());
 
     let app = builder
         .invoke_handler(tauri::generate_handler![
@@ -109,7 +114,13 @@ pub fn run() {
             let config_dir = app.path().app_config_dir()?;
             let cache_dir = app.path().app_cache_dir()?;
             let config = connection::load(&connection::config_file(&config_dir));
-            let keys = std::sync::Arc::new(device::DeviceKeys::new(&config_dir));
+            #[cfg(target_os = "android")]
+            let sealer: Option<std::sync::Arc<dyn device::Sealer>> = Some(
+                app.state::<std::sync::Arc<keyvault::KeyVault>>().inner().clone() as std::sync::Arc<dyn device::Sealer>,
+            );
+            #[cfg(not(target_os = "android"))]
+            let sealer = None;
+            let keys = std::sync::Arc::new(device::DeviceKeys::new(&config_dir, sealer));
             let client = remote::http_client();
             let token = generate_token();
             // Phones have no core of their own: always a server, through the proxy.

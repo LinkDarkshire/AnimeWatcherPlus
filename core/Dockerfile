@@ -22,6 +22,6 @@ EXPOSE 8784 8785
 VOLUME ["/data"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8784/health')"
+    CMD python -c "import ssl, urllib.request; urllib.request.urlopen('https://127.0.0.1:8784/health', context=ssl._create_unverified_context())"
 
 CMD ["python", "run.py", "--server"]

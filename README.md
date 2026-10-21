@@ -226,11 +226,26 @@ dort, der Scanner läuft dort.
    Admin. Danach lässt sich die lokale Bibliothek auf den Server übertragen
    (mit Pfad-Zuordnung, z. B. `Z:\Anime` → `/media/Anime`) und umschalten.
 
-Es gibt keine Passwörter: Jedes Gerät hat einen eigenen Schlüssel
-(Ed25519, im Schlüsselbund des Systems) und meldet sich damit an. Neue
-Geräte werden nur im Heimnetz gekoppelt – mit einem Code, den ein
-Admin-Gerät unter *Einstellungen → Geräte* erzeugt, und nach dessen
-Freigabe. Ein widerrufenes Gerät verliert sofort den Zugriff.
+### Sicherheit
+
+- **Keine Passwörter:** Jedes Gerät hat einen eigenen Schlüssel (Ed25519)
+  und meldet sich damit an. Der private Teil bleibt auf dem Gerät – im
+  Schlüsselbund des Systems bzw. auf Android versiegelt mit einem Schlüssel
+  aus dem Android Keystore (StrongBox, wo vorhanden).
+- **Koppeln nur im Heimnetz:** mit dem Einrichtungscode (erstes Gerät,
+  wird Admin) oder einem 5-Minuten-Code, den ein Admin-Gerät unter
+  *Einstellungen → Geräte* erzeugt, plus dessen Freigabe. Ein widerrufenes
+  Gerät verliert sofort den Zugriff.
+- **Verschlüsselt auch im Heimnetz:** Der Server erzeugt beim ersten Start
+  ein eigenes Zertifikat (`data/tls/`). Die Geräte merken es sich beim
+  Koppeln; der Code selbst wird dabei nie übertragen, nur ein Nachweis,
+  der an genau dieses Zertifikat gebunden ist – wer sich im Netz
+  dazwischenschaltet, fällt auf. Aus dem Internet gilt das normale
+  Zertifikat des Reverse Proxys.
+- Wird `data/tls/` gelöscht, entsteht ein neues Zertifikat und alle Geräte
+  müssen neu gekoppelt werden.
+- Der Container läuft ohne Zusatzrechte und mit schreibgeschütztem System
+  (siehe `deploy/docker-compose.yml`).
 
 ## Android-App
 

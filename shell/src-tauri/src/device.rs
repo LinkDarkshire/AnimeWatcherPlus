@@ -3,7 +3,8 @@
 //! half stays in the OS keyring (Windows Credential Manager, macOS Keychain,
 //! Secret Service on Linux), or -- where no keyring is available -- in a file
 //! only this user can read. On Android that file is in the app's private
-//! storage, which no other app can read. The UI never gets the key, only
+//! storage, which no other app can read, and sealed with a key from the
+//! Android Keystore (keyvault.rs) -- copied off the phone, it's useless. The UI never gets the key, only
 //! signatures over login challenges.
 
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -19,8 +20,18 @@ const ACCOUNT: &str = "device-key";
 // Must match core/app/security/keys.py.
 const AUTH_PREFIX: &str = "AnimeWatcherPlus auth v1\n";
 
+/// Encrypts the key file with a key the OS keeps in secure hardware
+/// (Android Keystore, see keyvault.rs).
+pub trait Sealer: Send + Sync {
+    fn seal(&self, data: &[u8]) -> Result<Vec<u8>, String>;
+    fn open(&self, sealed: &[u8]) -> Result<Vec<u8>, String>;
+}
+
+const SEALED_PREFIX: &str = "sealed1:";
+
 pub struct DeviceKeys {
     fallback_file: PathBuf,
+    sealer: Option<std::sync::Arc<dyn Sealer>>,
     key: Mutex<Option<SigningKey>>,
     // Made when pairing starts, kept only once the server accepted it.
     pending: Mutex<Option<SigningKey>>,
@@ -113,9 +124,10 @@ fn write_private_file(path: &Path, content: &str) -> Result<(), String> {
 }
 
 impl DeviceKeys {
-    pub fn new(config_dir: &Path) -> Self {
+    pub fn new(config_dir: &Path, sealer: Option<std::sync::Arc<dyn Sealer>>) -> Self {
         DeviceKeys {
             fallback_file: config_dir.join("device-key"),
+            sealer,
             key: Mutex::new(None),
             pending: Mutex::new(None),
         }
@@ -133,15 +145,47 @@ impl DeviceKeys {
                 None
             }
         };
-        let key = from_keyring
-            .or_else(|| {
-                std::fs::read_to_string(&self.fallback_file)
-                    .ok()
-                    .and_then(|s| decode(&s))
-            })
-            .ok_or("Kein Geräteschlüssel vorhanden – das Gerät neu mit dem Server koppeln")?;
+        let key = match from_keyring {
+            Some(key) => key,
+            None => self
+                .read_file()?
+                .ok_or("Kein Geräteschlüssel vorhanden – das Gerät neu mit dem Server koppeln")?,
+        };
         *cached = Some(key.clone());
         Ok(key)
+    }
+
+    fn read_file(&self) -> Result<Option<SigningKey>, String> {
+        let Ok(content) = std::fs::read_to_string(&self.fallback_file) else {
+            return Ok(None);
+        };
+        match (content.trim().strip_prefix(SEALED_PREFIX), &self.sealer) {
+            (Some(sealed), Some(sealer)) => {
+                let sealed = STANDARD.decode(sealed).map_err(|e| e.to_string())?;
+                let secret = sealer.open(&sealed)?;
+                Ok(decode(&String::from_utf8_lossy(&secret)))
+            }
+            (Some(_), None) => Err("Geräteschlüssel versiegelt, aber kein Tresor verfügbar".into()),
+            (None, _) => {
+                let key = decode(&content);
+                if let (Some(key), Some(_)) = (&key, &self.sealer) {
+                    // Written before sealing existed: seal it now.
+                    self.write_file(&STANDARD.encode(key.to_bytes()))?;
+                }
+                Ok(key)
+            }
+        }
+    }
+
+    fn write_file(&self, secret: &str) -> Result<(), String> {
+        match &self.sealer {
+            // Fail closed: never fall back to an unsealed key where sealing exists.
+            Some(sealer) => {
+                let sealed = sealer.seal(secret.as_bytes())?;
+                write_private_file(&self.fallback_file, &format!("{SEALED_PREFIX}{}", STANDARD.encode(sealed)))
+            }
+            None => write_private_file(&self.fallback_file, secret),
+        }
     }
 
     fn store(&self, key: &SigningKey) -> Result<(), String> {
@@ -153,7 +197,7 @@ impl DeviceKeys {
             }
             Err(e) => {
                 log::info!("keyring unavailable, keeping the device key in a private file: {e}");
-                write_private_file(&self.fallback_file, &secret)
+                self.write_file(&secret)
             }
         }
     }
@@ -191,5 +235,57 @@ impl DeviceKeys {
         let key = self.load()?;
         let message = format!("{AUTH_PREFIX}{device_id}\n{nonce}");
         Ok(STANDARD.encode(key.sign(message.as_bytes()).to_bytes()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    /// Stands in for the Android Keystore: XOR with a fixed byte.
+    struct FakeVault;
+
+    impl Sealer for FakeVault {
+        fn seal(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+            Ok(data.iter().map(|b| b ^ 0x5a).collect())
+        }
+        fn open(&self, sealed: &[u8]) -> Result<Vec<u8>, String> {
+            self.seal(sealed)
+        }
+    }
+
+    fn dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("awp-device-test-{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn key_file_is_sealed_and_reads_back() {
+        let dir = dir();
+        let keys = DeviceKeys::new(&dir, Some(Arc::new(FakeVault)));
+        let key = SigningKey::generate(&mut OsRng);
+        let secret = STANDARD.encode(key.to_bytes());
+        keys.write_file(&secret).unwrap();
+
+        let content = std::fs::read_to_string(dir.join("device-key")).unwrap();
+        assert!(content.starts_with(SEALED_PREFIX));
+        assert!(!content.contains(&secret));
+        assert_eq!(keys.read_file().unwrap().unwrap().to_bytes(), key.to_bytes());
+
+        // Without the vault (e.g. the file copied elsewhere) it can't be read.
+        assert!(DeviceKeys::new(&dir, None).read_file().is_err());
+    }
+
+    #[test]
+    fn an_unsealed_key_file_gets_sealed() {
+        let dir = dir();
+        let key = SigningKey::generate(&mut OsRng);
+        write_private_file(&dir.join("device-key"), &STANDARD.encode(key.to_bytes())).unwrap();
+
+        let keys = DeviceKeys::new(&dir, Some(Arc::new(FakeVault)));
+        assert_eq!(keys.read_file().unwrap().unwrap().to_bytes(), key.to_bytes());
+        assert!(std::fs::read_to_string(dir.join("device-key")).unwrap().starts_with(SEALED_PREFIX));
     }
 }

@@ -16,14 +16,17 @@ pub enum Mode {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ServerConfig {
     pub name: String,
-    /// The API in the server's LAN, e.g. http://192.168.1.10:8784.
+    /// The API in the server's LAN, e.g. https://192.168.1.10:8784.
     pub lan_url: String,
-    /// The LAN-only pairing port, e.g. http://192.168.1.10:8785.
+    /// The LAN-only pairing port, e.g. https://192.168.1.10:8785.
     pub pairing_url: String,
     /// The API through the reverse proxy, e.g. https://awp.example.com.
     #[serde(default)]
     pub internet_url: Option<String>,
     pub device_id: i64,
+    /// SHA-256 of the server's own certificate, pinned when pairing (LAN).
+    #[serde(default)]
+    pub tls_fingerprint: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default, Debug)]

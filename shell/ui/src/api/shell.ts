@@ -12,6 +12,8 @@ export interface ServerConfig {
   pairing_url: string
   internet_url: string | null
   device_id: number
+  /** The server's own certificate, pinned when pairing. */
+  tls_fingerprint: string | null
 }
 
 export interface ShellConnection {
@@ -32,6 +34,7 @@ export interface ServerProbe {
   setup_required: boolean
   lan_url: string
   pairing_url: string
+  tls_fingerprint: string
 }
 
 export interface PairStatus {
@@ -103,6 +106,7 @@ export const shell = {
     lanUrl: string
     pairingUrl: string
     serverName: string
+    tlsFingerprint: string
     deviceName: string
     code: string
     setup: boolean

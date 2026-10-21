@@ -14,6 +14,11 @@ CHALLENGE_TTL_S = 60
 PAIRING_CODE_TTL_S = 5 * 60
 JOIN_REQUEST_TTL_S = 10 * 60
 MAX_CODE_ATTEMPTS = 5
+# Caps against flooding the server's memory with half-finished logins and
+# pairings (nobody needs more than a handful at a time).
+MAX_CHALLENGES = 1000
+MAX_PAIRING_CODES = 5
+MAX_JOIN_REQUESTS = 20
 
 # No 0/O, 1/I/L: codes are read off a screen and typed in.
 _CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
@@ -77,6 +82,10 @@ class SecurityState:
 
     def new_challenge(self, device_id: int) -> str:
         self.purge()
+        if len(self.challenges) >= MAX_CHALLENGES:
+            # Oldest first out: a real device asks again within a minute anyway.
+            oldest = min(self.challenges, key=lambda n: self.challenges[n][1])
+            del self.challenges[oldest]
         nonce = secrets.token_urlsafe(32)
         self.challenges[nonce] = (device_id, time.time() + CHALLENGE_TTL_S)
         return nonce
@@ -127,8 +136,12 @@ class SecurityState:
     def new_pairing_code(self) -> tuple[str, int]:
         self.purge()
         code = OneTimeCode(new_code(8), time.time() + PAIRING_CODE_TTL_S)
-        self.pairing_codes.append(code)
+        self.pairing_codes = [*self.pairing_codes[-(MAX_PAIRING_CODES - 1) :], code]
         return code.code, PAIRING_CODE_TTL_S
+
+    def open_pairing_codes(self) -> list[str]:
+        self.purge()
+        return [c.code for c in self.pairing_codes]
 
     def use_pairing_code(self, given: str) -> bool:
         self.purge()

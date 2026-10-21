@@ -5,6 +5,7 @@
 
 use crate::connection::ServerConfig;
 use crate::device::DeviceKeys;
+use crate::tls;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::json;
@@ -75,6 +76,7 @@ pub async fn read_json<T: DeserializeOwned>(
     })
 }
 
+/// Plain HTTP to this machine's own core (127.0.0.1).
 pub fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(8))
@@ -85,6 +87,9 @@ pub fn http_client() -> reqwest::Client {
 pub struct Session {
     pub base: String,
     pub token: String,
+    /// The HTTP client and TLS settings for `base` (pinned for the LAN).
+    pub client: reqwest::Client,
+    pub tls: Arc<rustls::ClientConfig>,
 }
 
 #[derive(Default)]
@@ -95,18 +100,38 @@ struct State {
 
 pub struct Remote {
     server: std::sync::RwLock<ServerConfig>,
-    pub client: reqwest::Client,
+    lan: (reqwest::Client, Arc<rustls::ClientConfig>),
+    public: (reqwest::Client, Arc<rustls::ClientConfig>),
     keys: Arc<DeviceKeys>,
     state: Mutex<State>,
 }
 
 impl Remote {
-    pub fn new(server: ServerConfig, keys: Arc<DeviceKeys>, client: reqwest::Client) -> Self {
+    pub fn new(server: ServerConfig, keys: Arc<DeviceKeys>) -> Self {
+        // No pin (paired before the server had TLS): nothing matches, the
+        // device has to be paired again.
+        let pin = server.tls_fingerprint.clone().unwrap_or_default();
+        let lan_tls = tls::pinned_config(tls::pinned_verifier(Some(pin.clone())));
+        let public_tls = tls::public_config();
         Remote {
             server: std::sync::RwLock::new(server),
-            client,
+            lan: (tls::pinned_client(&pin), lan_tls),
+            public: (tls::public_client(), public_tls),
             keys,
             state: Mutex::new(State::default()),
+        }
+    }
+
+    /// For the LAN-only pairing port (pinned certificate).
+    pub fn lan_client(&self) -> reqwest::Client {
+        self.lan.0.clone()
+    }
+
+    fn connection_for(&self, base: &str) -> &(reqwest::Client, Arc<rustls::ClientConfig>) {
+        if base == self.server().lan_url {
+            &self.lan
+        } else {
+            &self.public
         }
     }
 
@@ -120,8 +145,9 @@ impl Remote {
     }
 
     async fn answers(&self, base: &str, timeout: Duration) -> bool {
+        let client = &self.connection_for(base).0;
         matches!(
-            self.client.get(format!("{base}/health")).timeout(timeout).send().await,
+            client.get(format!("{base}/health")).timeout(timeout).send().await,
             Ok(response) if response.status().is_success()
         )
     }
@@ -157,16 +183,13 @@ impl Remote {
         };
         if let Some((token, expires)) = &state.token {
             if *expires > Instant::now() + Duration::from_secs(60) {
-                return Ok(Session {
-                    base,
-                    token: token.clone(),
-                });
+                return Ok(self.session_for(base, token.clone()));
             }
         }
         match self.login(&base).await {
             Ok((token, ttl)) => {
                 state.token = Some((token.clone(), Instant::now() + Duration::from_secs(ttl)));
-                Ok(Session { base, token })
+                Ok(self.session_for(base, token))
             }
             Err(failure) => {
                 if failure.status.is_none() {
@@ -188,6 +211,16 @@ impl Remote {
         }
     }
 
+    fn session_for(&self, base: String, token: String) -> Session {
+        let (client, tls) = self.connection_for(&base).clone();
+        Session {
+            base,
+            token,
+            client,
+            tls,
+        }
+    }
+
     async fn login(&self, base: &str) -> Result<(String, u64), Failure> {
         #[derive(Deserialize)]
         struct Challenge {
@@ -199,8 +232,9 @@ impl Remote {
             expires_in: u64,
         }
         let device_id = self.server().device_id;
+        let client = &self.connection_for(base).0;
         let challenge: Challenge = read_json(
-            self.client
+            client
                 .post(format!("{base}/api/v1/auth/challenge"))
                 .json(&json!({ "device_id": device_id }))
                 .send()
@@ -212,7 +246,7 @@ impl Remote {
             message,
         })?;
         let token: Token = read_json(
-            self.client
+            client
                 .post(format!("{base}/api/v1/auth/token"))
                 .json(&json!({ "device_id": device_id, "nonce": challenge.nonce, "signature": signature }))
                 .send()

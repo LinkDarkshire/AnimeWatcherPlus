@@ -9,7 +9,8 @@
 #      and that code.
 #
 # How devices reach it:
-#   - at home (LAN):   directly, http://192.168.1.10:8784
+#   - at home (LAN):   directly, https://192.168.1.10:8784 (the server's own
+#                      certificate; the apps pin it when pairing)
 #   - from outside:    through SWAG, https://animewatcherplus.<your domain>
 #   - pairing (8785):  only in the LAN, never through SWAG or the router
 services:
@@ -33,6 +34,14 @@ services:
     networks:
       - swag
     restart: unless-stopped
+    # As few rights as possible: no extra capabilities, no privilege
+    # escalation, a read-only system (writes go to /data, /media and /tmp).
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
 
 networks:
   swag:

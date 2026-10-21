@@ -3,10 +3,13 @@ export interface PairingQr {
   awp: 1
   server: string
   code: string
+  /** The server's certificate as the admin device knows it: a phone that
+   * sees a different one is talking to someone else. */
+  cert?: string
 }
 
-export function pairingQrText(server: string, code: string): string {
-  const payload: PairingQr = { awp: 1, server, code }
+export function pairingQrText(server: string, code: string, cert: string | null): string {
+  const payload: PairingQr = { awp: 1, server, code, ...(cert ? { cert } : {}) }
   return JSON.stringify(payload)
 }
 
