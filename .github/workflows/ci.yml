@@ -49,14 +49,26 @@ jobs:
         run: npm run test
 
   tauri-check:
-    name: Tauri shell (cargo check)
-    runs-on: ubuntu-latest
+    # Windows too: the TLS stack (aws-lc) compiles C code, which is where
+    # platform differences show.
+    name: Tauri shell (cargo check, ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            sidecar: core-x86_64-unknown-linux-gnu
+          - os: windows-latest
+            sidecar: core-x86_64-pc-windows-msvc.exe
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: shell/src-tauri
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
@@ -64,14 +76,14 @@ jobs:
       - name: Create placeholder sidecar binary
         # bundle.externalBin in tauri.conf.json makes tauri-build require this
         # exact path to exist for *any* cargo build/check, on every target
-        # triple -- including this CI runner's, which never produces one
-        # since the real sidecar is only ever built for Windows (via
-        # PyInstaller, kept local, not committed). `cargo check`
-        # never executes the binary, it only needs the path to resolve, so
-        # an empty placeholder is enough.
+        # triple. `cargo check` never executes the binary, it only needs the
+        # path to resolve, so an empty placeholder is enough (the real one
+        # is built with PyInstaller in the release workflow).
         run: |
           mkdir -p binaries
-          touch binaries/core-x86_64-unknown-linux-gnu
-          chmod +x binaries/core-x86_64-unknown-linux-gnu
+          touch binaries/${{ matrix.sidecar }}
+          chmod +x binaries/${{ matrix.sidecar }}
       - name: cargo check
         run: cargo check
+      - name: cargo test
+        run: cargo test

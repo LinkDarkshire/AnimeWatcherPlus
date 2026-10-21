@@ -108,11 +108,13 @@ function MissingAnimeCard({
           <button type="button" className="min-w-0 text-left" onClick={() => setExpanded((v) => !v)}>
             <span className="mr-1 text-xs">{expanded ? "▾" : "▸"}</span>
             <span className="font-medium">{anime.title}</span>
-            {details && <span className="ml-2 text-xs text-[hsl(var(--muted-foreground))]">{details}</span>}
+            {details && (
+              <span className="block text-xs text-[hsl(var(--muted-foreground))] sm:ml-2 sm:inline">{details}</span>
+            )}
           </button>
           <div className="flex shrink-0 items-center gap-2">
             <Badge variant="outline">{t("downloads.episodesMissing", { count: anime.episodes.length })}</Badge>
-            <Link to={`/animes/${anime.anime_id}`} className="text-xs underline">
+            <Link to={`/animes/${anime.anime_id}`} className="px-2 py-1 text-sm">
               →
             </Link>
           </div>
@@ -176,7 +178,7 @@ function WantedRow({
           )}
         </p>
       </div>
-      <Button size="sm" variant={isOpen ? "ghost" : "outline"} onClick={onToggle}>
+      <Button size="sm" variant={isOpen ? "ghost" : "outline"} className="shrink-0" onClick={onToggle}>
         {isOpen ? t("downloads.close") : t("downloads.send")}
       </Button>
     </div>

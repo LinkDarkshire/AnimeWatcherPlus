@@ -75,12 +75,12 @@ export function Folders() {
       <div className="space-y-2">
         {folders?.map((folder) => (
           <Card key={folder.id}>
-            <CardContent className="flex items-center justify-between gap-2 p-3">
+            <CardContent className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{folder.name}</p>
-                <p className="truncate text-xs text-[hsl(var(--muted-foreground))]">{folder.path}</p>
+                <p className="text-xs break-all text-[hsl(var(--muted-foreground))] sm:truncate sm:break-normal">{folder.path}</p>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <Badge variant="outline">
                   {folder.type === "content" ? t("folders.typeContent") : t("folders.typeDownload")}
                 </Badge>

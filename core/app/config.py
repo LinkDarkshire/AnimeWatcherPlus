@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -21,6 +22,17 @@ class Settings(BaseSettings):
     data_dir: Path = _default_data_dir()
     sidecar_token: str = ""
     dev_mode: bool = True
+
+    # "desktop": embedded in the desktop app, guarded by the per-session
+    # sidecar token. "server": standalone (Docker), guarded by paired device
+    # keys, with pairing on its own LAN-only port.
+    mode: Literal["desktop", "server"] = "desktop"
+    # Uncommon ports on purpose: 8000/8080 are taken by many other containers.
+    api_port: int = 8784
+    pairing_port: int = 8785
+    server_name: str = "AnimeWatcherPlus"
+    # Extra allowed browser origins, comma separated (the app's own are built in).
+    cors_origins: str = ""
 
     anidb_client_name: str = "animewatcherplus"
     anidb_client_version: int = 1

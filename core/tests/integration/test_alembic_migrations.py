@@ -11,7 +11,7 @@ CORE_DIR = Path(__file__).resolve().parents[2]
 
 
 def test_alembic_upgrade_head_from_empty(tmp_path, monkeypatch) -> None:
-    """Kap. 10: 'Alembic leer -> head' must succeed against a brand-new DB file."""
+    """Migrating an empty database to the latest schema must succeed."""
     monkeypatch.setenv("AWP_DATA_DIR", str(tmp_path))
     get_settings.cache_clear()
 
@@ -38,7 +38,7 @@ def test_alembic_upgrade_head_from_empty(tmp_path, monkeypatch) -> None:
         conn.close()
 
     for expected in ("folder", "anime", "tag", "anidb_title_index", "anime_search_fts", "wishlist_entry",
-                     "download_integration", "download_request"):
+                     "download_integration", "download_request", "device"):
         assert expected in tables
 
 

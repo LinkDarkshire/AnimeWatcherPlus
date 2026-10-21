@@ -416,6 +416,7 @@ export function useAddToWishlist() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["wishlist"] })
       queryClient.invalidateQueries({ queryKey: ["wishlist-search"] })
+      queryClient.invalidateQueries({ queryKey: ["wishlist-shared"] })
     },
   })
 }

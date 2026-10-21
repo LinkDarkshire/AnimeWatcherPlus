@@ -1,0 +1,8 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.app" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Behind the status and gesture bar: the UI's light background
+             (the background color in shell/ui/src/index.css). -->
+        <item name="android:windowBackground">@color/app_background</item>
+    </style>
+</resources>

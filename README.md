@@ -9,6 +9,10 @@
 Lokale Desktop-Anwendung zur Verwaltung einer Anime-Sammlung: erkennt Animes
 in deinen Ordnern über AniDB, zeigt fehlende Folgen, sortiert und benennt
 Downloads einheitlich und übergibt neue Folgen an deinen Download-Client.
+Die Bibliothek kann auch auf einem Server (z. B. NAS) liegen – dann greifen
+mehrere PCs und die Android-App darauf zu.
+
+**Einrichtung von null an:** [docs/EINRICHTUNG.md](docs/EINRICHTUNG.md)
 
 ## Funktionen
 
@@ -56,6 +60,21 @@ Downloads einheitlich und übergibt neue Folgen an deinen Download-Client.
 - **Installer & Auto-Update:** signierter NSIS-Installer; die App prüft beim
   Start auf neue Versionen in den GitHub Releases. Unter Linux als AppImage,
   das ohne Installation läuft.
+
+## Neu in 0.3.0
+
+- **Server-Modus:** die Bibliothek als Docker-Container auf dem NAS, dort
+  wo die Dateien liegen; Desktop-Apps verbinden sich damit, Einstellungen
+  und Plugins liegen zentral. Umschalten zwischen lokal und Server samt
+  Umzug der Bibliothek in beide Richtungen.
+- **Android-App:** Bibliothek, Wunschliste und Downloads vom Server auf dem
+  Handy; Koppeln per QR-Code; Beiträge (z. B. von X) über *Teilen* direkt
+  als Wunschlisten-Vorschlag.
+- **Sicherheit ohne Passwörter:** Geräteschlüssel, Koppeln nur im
+  Heimnetz mit Freigabe durch ein Admin-Gerät, Verschlüsselung auch im
+  Heimnetz mit gemerktem Server-Zertifikat.
+- Oberfläche für Handy- und Tablet-Breite (Navigation unten).
+- Schritt-für-Schritt-Einrichtung: [docs/EINRICHTUNG.md](docs/EINRICHTUNG.md)
 
 ## Neu in 0.2.0
 
@@ -206,11 +225,83 @@ gebautes AppImage läuft auf Systemen, die mindestens so neu sind wie der
 Container (Fedora 44); das AppImage aus den GitHub Releases wird auf Ubuntu
 22.04 gebaut und läuft auch auf älteren Systemen.
 
+## Server-Modus (Docker, z. B. auf dem NAS)
+
+Ausführlich, mit allen Schritten: [docs/EINRICHTUNG.md](docs/EINRICHTUNG.md).
+
+Die Bibliothek kann statt in der Desktop-App auf einem Server liegen – dort,
+wo die Anime-Dateien sind. Desktop-Apps und die Android-App verbinden sich
+dann mit diesem Server; Einstellungen und Download-Plugins liegen zentral
+dort, der Scanner läuft dort.
+
+1. `deploy/docker-compose.yml` anpassen (LAN-IP des Servers, Medienordner)
+   und starten: `docker compose up -d`. Der Ordner `./data` muss dem
+   Container-Benutzer (1000:1000) gehören.
+2. Port **8784** ist die API, Port **8785** nur zum Koppeln von Geräten.
+   Beide nur ins Heimnetz freigeben; aus dem Internet geht nur 8784 über
+   den Reverse Proxy (Vorlage für SWAG: `deploy/swag/`).
+3. Beim ersten Start steht ein **Einrichtungscode** im Log
+   (`docker logs animewatcherplus`).
+4. In der Desktop-App unter *Einstellungen → Datenquelle → Mit Server
+   verbinden* die Server-Adresse und den Code eingeben – dieses Gerät wird
+   Admin. Danach lässt sich die lokale Bibliothek auf den Server übertragen
+   (mit Pfad-Zuordnung, z. B. `Z:\Anime` → `/media/Anime`) und umschalten.
+
+### Sicherheit
+
+- **Keine Passwörter:** Jedes Gerät hat einen eigenen Schlüssel (Ed25519)
+  und meldet sich damit an. Der private Teil bleibt auf dem Gerät – im
+  Schlüsselbund des Systems bzw. auf Android versiegelt mit einem Schlüssel
+  aus dem Android Keystore (StrongBox, wo vorhanden).
+- **Koppeln nur im Heimnetz:** mit dem Einrichtungscode (erstes Gerät,
+  wird Admin) oder einem 5-Minuten-Code, den ein Admin-Gerät unter
+  *Einstellungen → Geräte* erzeugt, plus dessen Freigabe. Ein widerrufenes
+  Gerät verliert sofort den Zugriff.
+- **Verschlüsselt auch im Heimnetz:** Der Server erzeugt beim ersten Start
+  ein eigenes Zertifikat (`data/tls/`). Die Geräte merken es sich beim
+  Koppeln; der Code selbst wird dabei nie übertragen, nur ein Nachweis,
+  der an genau dieses Zertifikat gebunden ist – wer sich im Netz
+  dazwischenschaltet, fällt auf. Aus dem Internet gilt das normale
+  Zertifikat des Reverse Proxys.
+- Wird `data/tls/` gelöscht, entsteht ein neues Zertifikat und alle Geräte
+  müssen neu gekoppelt werden.
+- Der Container läuft ohne Zusatzrechte und mit schreibgeschütztem System
+  (siehe `deploy/docker-compose.yml`).
+
+## Android-App
+
+Die Android-App zeigt die Bibliothek eines AnimeWatcherPlus-Servers (eine
+eigene lokale Bibliothek hat sie nicht). Die APK liegt den GitHub Releases
+bei.
+
+- **Koppeln:** im WLAN des Servers den QR-Code scannen, den ein Admin-Gerät
+  unter *Einstellungen → Geräte → Gerät hinzufügen* zeigt (oder Adresse und
+  Code eintippen), dann am Admin-Gerät freigeben. Unterwegs verbindet sich
+  die App über die Internet-Adresse, falls eingetragen.
+- **Teilen → Wunschliste:** einen Beitrag (z. B. auf X) über *Teilen* an
+  AnimeWatcherPlus schicken. Der Server holt den Text des Beitrags und
+  schlägt die darin erkannten Animes zum Hinzufügen vor.
+
+Selbst bauen (im Distrobox-Container; die Toolchain landet in `~/Android`):
+
+```bash
+./build_android.sh --setup     # einmalig, ~5 GB
+./build_android.sh             # Debug-APK
+./build_android.sh --release   # Release-APK (Signierung siehe Skriptkopf)
+```
+
 ## Release erstellen
 
 Releases baut GitHub automatisch (`.github/workflows/release.yml`): den
 Windows-Installer und das Linux-AppImage, beide signiert für den
-Auto-Updater, zusammen mit der `latest.json`.
+Auto-Updater, zusammen mit der `latest.json`; dazu die Android-APK und das
+Server-Image (`ghcr.io/<owner>/animewatcherplus-server`).
+
+Für die APK zusätzlich den Android-Signierschlüssel hinterlegen
+(`ANDROID_KEYSTORE_BASE64` = `base64 -w0 awp-release.jks`,
+`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`); ohne ihn wird die APK
+übersprungen. Den Schlüssel gut aufbewahren – Updates müssen mit demselben
+Schlüssel signiert sein.
 
 Einmalig: den Updater-Signierschlüssel erzeugen (bleibt außerhalb des Repos)
 und seinen **Inhalt** auf GitHub unter *Settings → Secrets and variables →
@@ -227,7 +318,7 @@ und muss dazu passen.
 Für jeden Release:
 
 1. Version in `tauri.conf.json`, `Cargo.toml`, `core/pyproject.toml`,
-   `core/app/main.py` und `shell/ui/package.json` anheben.
+   `core/app/__init__.py` und `shell/ui/package.json` anheben.
 2. Auf `main` einen Tag setzen und pushen:
    ```bash
    git tag v0.2.0
@@ -235,6 +326,9 @@ Für jeden Release:
    ```
 3. Der Workflow legt einen **Entwurf** unter *Releases* an. Prüfen und
    veröffentlichen – erst dann bieten installierte Apps das Update an.
+4. Nur beim allerersten Release: das Server-Image unter *GitHub → Profil →
+   Packages → animewatcherplus-server → Package settings* auf **Public**
+   stellen, sonst kann `docker compose pull` es nicht laden.
 
 ### Windows-Installer von Hand bauen
 

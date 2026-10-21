@@ -1,0 +1,49 @@
+# AnimeWatcherPlus server -- example for a NAS next to SWAG (linuxserver.io).
+#
+#   1. Adjust the paths, the user and the LAN address below, and create
+#      ./data owned by that user (otherwise docker creates it as root and
+#      the server can't write to it).
+#   2. docker compose up -d
+#   3. docker logs animewatcherplus   -> shows the one-time setup code
+#   4. Pair the desktop app from inside the LAN with the server's address
+#      and that code.
+#
+# How devices reach it:
+#   - at home (LAN):   directly, https://192.168.1.10:8784 (the server's own
+#                      certificate; the apps pin it when pairing)
+#   - from outside:    through SWAG, https://animewatcherplus.<your domain>
+#   - pairing (8785):  only in the LAN, never through SWAG or the router
+services:
+  animewatcherplus:
+    image: ghcr.io/linkdarkshire/animewatcherplus-server:latest
+    container_name: animewatcherplus
+    # The user the files on the NAS belong to (id -u / id -g), so the server
+    # can move and rename them.
+    user: "1000:1000"
+    environment:
+      - TZ=Europe/Berlin
+      - AWP_SERVER_NAME=AnimeWatcherPlus
+    volumes:
+      - ./data:/data                # database, AniDB cache, plugins
+      - /path/to/your/anime:/media  # add the folders in the app as /media/...
+    ports:
+      # Both bound to the NAS's LAN address only. Don't forward either in
+      # the router: the internet goes through SWAG (shared network below).
+      - "192.168.1.10:8784:8784"    # API, for devices in the LAN
+      - "192.168.1.10:8785:8785"    # pairing, LAN only
+    networks:
+      - swag
+    restart: unless-stopped
+    # As few rights as possible: no extra capabilities, no privilege
+    # escalation, a read-only system (writes go to /data, /media and /tmp).
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+networks:
+  swag:
+    # The network your SWAG container is in.
+    external: true

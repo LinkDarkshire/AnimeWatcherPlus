@@ -61,6 +61,13 @@ option {
   color: hsl(var(--foreground));
 }
 
+/* A dropdown is as wide as its longest option -- a long tag or anime title
+   would push it past the edge of a phone screen. */
+select {
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
+
 #root {
   min-height: 100svh;
 }

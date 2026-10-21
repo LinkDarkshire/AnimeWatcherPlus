@@ -21,6 +21,10 @@ export function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHead
   return <h3 className={cn("text-sm font-semibold leading-tight", className)} {...props} />
 }
 
+// No padding of its own: every card sets it (p-3, p-4). `cn` doesn't merge
+// conflicting utilities, so a default here would win over the caller's
+// depending on CSS order (a default pt-0 used to glue every card's text to
+// its top edge).
 export function CardContent({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("p-4 pt-0", className)} {...props} />
+  return <div className={cn(className)} {...props} />
 }

@@ -1,39 +1,62 @@
-"""PyInstaller entry point for the core sidecar binary.
+"""Entry point of the core: for the desktop app's sidecar (and its frozen
+PyInstaller build) and for the standalone server (Docker).
 
-Mirrors `python -m uvicorn app.main:app --host ... --port ...` (the dev-mode
-invocation in shell/src-tauri/src/lib.rs) so the Rust supervisor can pass the
-same --host/--port args to either the dev venv's python or this frozen exe.
+Desktop (default): `run.py --host 127.0.0.1 --port 8000` -- what the desktop
+shell starts, the same arguments in dev and frozen builds.
+
+Server: `run.py --server` (or AWP_MODE=server) -- listens on the API port
+and on the LAN-only pairing port (AWP_API_PORT / AWP_PAIRING_PORT, default
+8784 / 8785), one process serving both, over HTTPS with the server's own
+certificate (made on first start in <data>/tls/).
 """
 
 from __future__ import annotations
 
+import asyncio
+import os
 import sys
 
 import uvicorn
 
 # Importing the app object directly (rather than passing the "app.main:app"
-# string to uvicorn.run, which resolves it via a runtime importlib lookup)
-# is required for PyInstaller: its static analyzer only bundles modules it
-# can see imported somewhere -- a string it can't introspect means the whole
-# `app` package silently never makes it into the frozen build.
+# string to uvicorn) is required for PyInstaller: it only bundles modules it
+# can see imported.
 from app.main import app as fastapi_app
 
 
+def _arg(args: list[str], name: str, default: str) -> str:
+    return args[args.index(name) + 1] if name in args and args.index(name) + 1 < len(args) else default
+
+
+async def _serve_server_mode(host: str, api_port: int, pairing_port: int, cert: str, key: str) -> None:
+    # One app, two listeners, both TLS with the server's own certificate
+    # (devices pin it, see app/security/tls.py). The app's lifespan
+    # (migrations, scanner, ...) runs once, with the API listener; the
+    # middleware tells the two apart by the port a request arrived on.
+    tls = {"ssl_certfile": cert, "ssl_keyfile": key}
+    api = uvicorn.Server(uvicorn.Config(fastapi_app, host=host, port=api_port, proxy_headers=True, **tls))
+    pairing = uvicorn.Server(uvicorn.Config(fastapi_app, host=host, port=pairing_port, lifespan="off", **tls))
+    await asyncio.gather(api.serve(), pairing.serve())
+
+
 def main() -> None:
-    host = "127.0.0.1"
-    port = 8000
     args = sys.argv[1:]
-    i = 0
-    while i < len(args):
-        if args[i] == "--host" and i + 1 < len(args):
-            host = args[i + 1]
-            i += 2
-        elif args[i] == "--port" and i + 1 < len(args):
-            port = int(args[i + 1])
-            i += 2
-        else:
-            i += 1
-    uvicorn.run(fastapi_app, host=host, port=port)
+    if "--server" in args or os.environ.get("AWP_MODE") == "server":
+        from app.config import get_settings
+
+        settings = get_settings()
+        if settings.mode != "server":
+            sys.exit("--server needs AWP_MODE=server (the app reads its mode at import time)")
+        from app.security.tls import ensure_certificate
+
+        cert, key = ensure_certificate(settings)
+        asyncio.run(
+            _serve_server_mode(
+                _arg(args, "--host", "0.0.0.0"), settings.api_port, settings.pairing_port, str(cert), str(key)
+            )
+        )
+        return
+    uvicorn.run(fastapi_app, host=_arg(args, "--host", "127.0.0.1"), port=int(_arg(args, "--port", "8000")))
 
 
 if __name__ == "__main__":
