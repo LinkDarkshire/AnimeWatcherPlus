@@ -10,7 +10,9 @@
 # rustup with the Android targets -- so the system and its Rust stay untouched.
 #
 # Release signing: set ANDROID_KEYSTORE (path to the .jks), ANDROID_KEY_ALIAS
-# and ANDROID_KEYSTORE_PASSWORD. Make a keystore once with
+# and ANDROID_KEYSTORE_PASSWORD -- e.g. from a file kept outside the repo:
+#   set -a; source ~/.awp-secrets/android-signing.env; set +a
+#   ./build_android.sh --release Make a keystore once with
 #   ~/Android/jdk-17/bin/keytool -genkey -v -keystore awp-release.jks \
 #       -keyalg RSA -keysize 4096 -validity 10000 -alias awp
 # and keep it safe: updates must be signed with the same key.
@@ -82,6 +84,8 @@ npm --prefix ui install --silent
 if [[ "${1:-}" == "--release" ]]; then
     KEYSTORE_PROPERTIES="$ROOT/shell/src-tauri/gen/android/keystore.properties"
     if [[ -n "${ANDROID_KEYSTORE:-}" ]]; then
+        # Holds the password: only for the duration of the build.
+        trap 'rm -f "$KEYSTORE_PROPERTIES"' EXIT
         printf 'storeFile=%s\npassword=%s\nkeyAlias=%s\n' \
             "$ANDROID_KEYSTORE" "${ANDROID_KEYSTORE_PASSWORD:?}" "${ANDROID_KEY_ALIAS:?}" > "$KEYSTORE_PROPERTIES"
     else
