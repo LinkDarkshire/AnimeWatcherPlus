@@ -9,6 +9,10 @@
 Lokale Desktop-Anwendung zur Verwaltung einer Anime-Sammlung: erkennt Animes
 in deinen Ordnern über AniDB, zeigt fehlende Folgen, sortiert und benennt
 Downloads einheitlich und übergibt neue Folgen an deinen Download-Client.
+Die Bibliothek kann auch auf einem Server (z. B. NAS) liegen – dann greifen
+mehrere PCs und die Android-App darauf zu.
+
+**Einrichtung von null an:** [docs/EINRICHTUNG.md](docs/EINRICHTUNG.md)
 
 ## Funktionen
 
@@ -56,6 +60,21 @@ Downloads einheitlich und übergibt neue Folgen an deinen Download-Client.
 - **Installer & Auto-Update:** signierter NSIS-Installer; die App prüft beim
   Start auf neue Versionen in den GitHub Releases. Unter Linux als AppImage,
   das ohne Installation läuft.
+
+## Neu in 0.3.0
+
+- **Server-Modus:** die Bibliothek als Docker-Container auf dem NAS, dort
+  wo die Dateien liegen; Desktop-Apps verbinden sich damit, Einstellungen
+  und Plugins liegen zentral. Umschalten zwischen lokal und Server samt
+  Umzug der Bibliothek in beide Richtungen.
+- **Android-App:** Bibliothek, Wunschliste und Downloads vom Server auf dem
+  Handy; Koppeln per QR-Code; Beiträge (z. B. von X) über *Teilen* direkt
+  als Wunschlisten-Vorschlag.
+- **Sicherheit ohne Passwörter:** Geräteschlüssel, Koppeln nur im
+  Heimnetz mit Freigabe durch ein Admin-Gerät, Verschlüsselung auch im
+  Heimnetz mit gemerktem Server-Zertifikat.
+- Oberfläche für Handy- und Tablet-Breite (Navigation unten).
+- Schritt-für-Schritt-Einrichtung: [docs/EINRICHTUNG.md](docs/EINRICHTUNG.md)
 
 ## Neu in 0.2.0
 
@@ -208,6 +227,8 @@ Container (Fedora 44); das AppImage aus den GitHub Releases wird auf Ubuntu
 
 ## Server-Modus (Docker, z. B. auf dem NAS)
 
+Ausführlich, mit allen Schritten: [docs/EINRICHTUNG.md](docs/EINRICHTUNG.md).
+
 Die Bibliothek kann statt in der Desktop-App auf einem Server liegen – dort,
 wo die Anime-Dateien sind. Desktop-Apps und die Android-App verbinden sich
 dann mit diesem Server; Einstellungen und Download-Plugins liegen zentral
@@ -305,6 +326,9 @@ Für jeden Release:
    ```
 3. Der Workflow legt einen **Entwurf** unter *Releases* an. Prüfen und
    veröffentlichen – erst dann bieten installierte Apps das Update an.
+4. Nur beim allerersten Release: das Server-Image unter *GitHub → Profil →
+   Packages → animewatcherplus-server → Package settings* auf **Public**
+   stellen, sonst kann `docker compose pull` es nicht laden.
 
 ### Windows-Installer von Hand bauen
 

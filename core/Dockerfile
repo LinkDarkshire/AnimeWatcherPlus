@@ -3,6 +3,10 @@
 # docker-compose example and the SWAG reverse proxy config.
 FROM python:3.12-slim
 
+# Links the image on ghcr.io to the repository (its page, README, visibility).
+LABEL org.opencontainers.image.source="https://github.com/LinkDarkshire/AnimeWatcherPlus" \
+      org.opencontainers.image.description="AnimeWatcherPlus server: anime library for the desktop and Android apps"
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     AWP_MODE=server \

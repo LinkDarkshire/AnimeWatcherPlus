@@ -8,7 +8,11 @@
 
 A local desktop app for managing an anime collection: it identifies the anime
 in your folders via AniDB, shows missing episodes, sorts and renames downloads
-consistently and hands new episodes to your download client.
+consistently and hands new episodes to your download client. The library
+can also live on a server (e.g. a NAS), shared by several PCs and the
+Android app.
+
+**Step-by-step setup (German):** [docs/EINRICHTUNG.md](docs/EINRICHTUNG.md)
 
 ## Features
 
@@ -53,6 +57,32 @@ consistently and hands new episodes to your download client.
 - **Installer & auto-update:** a signed NSIS installer; the app checks GitHub
   Releases for new versions at startup. On Linux as an AppImage that runs
   without installation.
+
+## New in 0.3.0
+
+- **Server mode:** the library as a Docker container on the NAS, where the
+  files are; desktop apps connect to it, settings and plugins are shared.
+  Switch between local and server data and move the library both ways.
+- **Android app:** library, wishlist and downloads from the server on the
+  phone; pairing by QR code; share a post (e.g. from X) to get wishlist
+  suggestions.
+- **Security without passwords:** per-device keys, pairing only in the home
+  network with an admin device's approval, encrypted LAN traffic with a
+  pinned server certificate.
+- Phone- and tablet-sized UI (bottom navigation).
+
+## Server mode and Android app
+
+- Server: `deploy/docker-compose.yml` (Docker), first start prints a setup
+  code (`docker logs animewatcherplus`); pair the desktop app under
+  *Settings → Data source*. Port 8784 is the API (LAN; from the internet
+  only through a reverse proxy, template in `deploy/swag/`), port 8785 is
+  for pairing and must stay in the LAN.
+- Android: the APK is attached to each release; pair it by scanning the QR
+  code an admin device shows under *Settings → Devices → Add device*.
+  Build it yourself with `./build_android.sh --setup` (once) and
+  `./build_android.sh`.
+- Full walkthrough: [docs/EINRICHTUNG.md](docs/EINRICHTUNG.md).
 
 ## New in 0.2.0
 
