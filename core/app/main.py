@@ -45,8 +45,8 @@ from app.providers.anidb import AniDBProvider
 from app.providers.anidb_activity import anidb_status, waiting_counts
 from app.providers.base import ProviderRegistry
 from app.security import devices, tls
+from app.services import parent_watch, snapshot
 from app.services import pending_actions as pending_actions_service
-from app.services import snapshot
 from app.services import wishlist as wishlist_service
 from app.services.anidb_watch import AniDBBlockWatcher
 from app.services.jobs import EventBus, JobQueue
@@ -167,10 +167,17 @@ async def lifespan(app: FastAPI):
 
     if settings.mode == "server":
         await _announce_setup_code(app.state.awp)
+    parent_watch_task = (
+        asyncio.create_task(parent_watch.watch_parent(settings.parent_pid))
+        if settings.mode == "desktop" and settings.parent_pid
+        else None
+    )
     logger.info("core_started", data_dir=str(settings.data_dir))
 
     yield
 
+    if parent_watch_task is not None:
+        parent_watch_task.cancel()
     await block_watcher.stop()
     await scanner.stop()
     await job_queue.stop()

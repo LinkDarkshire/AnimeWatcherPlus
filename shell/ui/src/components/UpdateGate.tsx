@@ -52,9 +52,13 @@ export function UpdateGate({ children }: { children: ReactNode }) {
   const handleInstall = async (update: Update) => {
     setState({ status: "installing", update })
     try {
-      await update.downloadAndInstall()
-      const { relaunch } = await import("@tauri-apps/plugin-process")
-      await relaunch()
+      await update.download()
+      // The core must not run on while the update is installed (on Windows
+      // the installer can't replace a running core.exe).
+      const { invoke } = await import("@tauri-apps/api/core")
+      await invoke("stop_core")
+      await update.install()
+      await invoke("restart_app")
     } catch (err) {
       setState({ status: "install-failed", update, message: err instanceof Error ? err.message : String(err) })
     }

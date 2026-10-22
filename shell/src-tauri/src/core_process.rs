@@ -36,8 +36,20 @@ impl CoreChild {
     }
 }
 
-pub struct CoreProcess {
-    pub child: Mutex<Option<CoreChild>>,
+/// The running core, if any. Global rather than app state: it has to be
+/// stopped on every way out -- normal exit, but also `AppHandle::restart`
+/// (switching data source, after an update), which ends the process without
+/// any run event, and before the updater runs its installer.
+static CORE: Mutex<Option<CoreChild>> = Mutex::new(None);
+
+pub fn adopt(child: CoreChild) {
+    *CORE.lock().unwrap() = Some(child);
+}
+
+pub fn stop() {
+    if let Some(child) = CORE.lock().unwrap().take() {
+        child.kill();
+    }
 }
 
 pub fn find_free_port() -> u16 {
@@ -78,6 +90,8 @@ pub fn spawn_core(_app: &tauri::AppHandle, port: u16, token: &str) -> CoreChild 
         ])
         .current_dir(&core_dir)
         .env("AWP_SIDECAR_TOKEN", token)
+        // The core ends itself if this process goes away without stopping it (crash).
+        .env("AWP_PARENT_PID", std::process::id().to_string())
         .spawn()
         .expect("failed to spawn AnimeWatcherPlus core (is core/.venv set up? see README)");
     CoreChild::Dev(child)
@@ -92,6 +106,7 @@ pub fn spawn_core(app: &tauri::AppHandle, port: u16, token: &str) -> CoreChild {
         .expect("failed to resolve bundled core sidecar binary")
         .args(["--host", "127.0.0.1", "--port", &port.to_string()])
         .env("AWP_SIDECAR_TOKEN", token)
+        .env("AWP_PARENT_PID", std::process::id().to_string())
         .spawn()
         .expect("failed to spawn AnimeWatcherPlus core sidecar");
     CoreChild::Sidecar(child)

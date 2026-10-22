@@ -1,6 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "AnimeWatcherPlus",
+  "mainBinaryName": "animewatcherplus",
   "version": "0.3.0",
   "identifier": "com.animewatcherplus.app",
   "build": {
@@ -35,6 +36,9 @@
   },
   "bundle": {
     "active": true,
+    "category": "Video",
+    "shortDescription": "Anime-Sammlung verwalten: fehlende Folgen, Wunschliste, Downloads",
+    "longDescription": "Erkennt Animes in deinen Ordnern über AniDB, zeigt fehlende Folgen, sortiert und benennt Downloads und übergibt neue Folgen an deinen Download-Client -- lokal oder mit einem eigenen Server.",
     "targets": ["nsis"],
     "createUpdaterArtifacts": true,
     "externalBin": ["binaries/core"],
