@@ -55,7 +55,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc0QTZFNjUwQzdDNDRBMEEKUldRS1NzVEhVT2FtZE52SjE5UWhycjRvRU14SWxTcGhVdThqTFRMbkNFSG5ZTFdKeEU2aTdrcTgK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdCNkQ3MDY0MDA1NzQ1NDYKUldSR1JWY0FaSEJ0ZS8wNzlzWmVZdklIVHpyV3Zuek1GUWR0VC9oRzBnYU8wamhhVGN4ZlV0Y0sK",
       "endpoints": [
         "https://github.com/LinkDarkshire/AnimeWatcherPlus/releases/latest/download/latest.json"
       ]
