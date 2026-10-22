@@ -64,6 +64,25 @@ fn open_url(url: String) -> Result<(), String> {
     result.map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// Restarts the app (after switching the data source or installing an
+/// update). Stops the core first: `restart` ends the process without the
+/// exit event that otherwise does it.
+#[tauri::command]
+fn restart_app(app: tauri::AppHandle) {
+    #[cfg(desktop)]
+    core_process::stop();
+    app.restart();
+}
+
+/// Stops the core before the updater installs a new version (on Windows the
+/// installer can't replace a running core.exe, and the updater exits the
+/// app without the exit event).
+#[tauri::command]
+fn stop_core() {
+    #[cfg(desktop)]
+    core_process::stop();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // WebKitGTK's DMA-BUF renderer shows a blank window with many GPU drivers
@@ -101,6 +120,8 @@ pub fn run() {
             server::server_pull_library,
             server::qr_svg,
             server::take_shared_text,
+            restart_app,
+            stop_core,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
@@ -159,9 +180,9 @@ pub fn run() {
             }
             app.manage(shell);
             #[cfg(desktop)]
-            app.manage(core_process::CoreProcess {
-                child: std::sync::Mutex::new(child),
-            });
+            if let Some(child) = child {
+                core_process::adopt(child);
+            }
 
             Ok(())
         })
@@ -171,11 +192,7 @@ pub fn run() {
     app.run(|_app_handle, _event| {
         #[cfg(desktop)]
         if let tauri::RunEvent::Exit = _event {
-            let state = _app_handle.state::<core_process::CoreProcess>();
-            let mut guard = state.child.lock().unwrap();
-            if let Some(child) = guard.take() {
-                child.kill();
-            }
+            core_process::stop();
         }
     });
 }

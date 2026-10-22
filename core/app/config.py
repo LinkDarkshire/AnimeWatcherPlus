@@ -21,6 +21,8 @@ class Settings(BaseSettings):
 
     data_dir: Path = _default_data_dir()
     sidecar_token: str = ""
+    # The desktop app's process, set by the app (the core ends with it).
+    parent_pid: int | None = None
     dev_mode: bool = True
 
     # "desktop": embedded in the desktop app, guarded by the per-session

@@ -137,9 +137,10 @@ export interface SharedPost {
   }[]
 }
 
+/** Restarts the app; the shell stops its core first (see restart_app). */
 export async function restartApp(): Promise<void> {
-  const { relaunch } = await import("@tauri-apps/plugin-process")
-  await relaunch()
+  const { invoke } = await import("@tauri-apps/api/core")
+  await invoke("restart_app")
 }
 
 export function useShellConnection() {
