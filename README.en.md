@@ -70,6 +70,8 @@ Android app.
   network with an admin device's approval, encrypted LAN traffic with a
   pinned server certificate.
 - Phone- and tablet-sized UI (bottom navigation).
+- New update signing key: self-built versions before 0.3.0 need 0.3.0
+  installed by hand once; after that the app updates itself again.
 
 ## Server mode and Android app
 

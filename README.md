@@ -75,6 +75,9 @@ mehrere PCs und die Android-App darauf zu.
   Heimnetz mit gemerktem Server-Zertifikat.
 - Oberfläche für Handy- und Tablet-Breite (Navigation unten).
 - Schritt-für-Schritt-Einrichtung: [docs/EINRICHTUNG.md](docs/EINRICHTUNG.md)
+- Neuer Signierschlüssel für Updates: Wer eine selbst gebaute Version vor
+  0.3.0 installiert hat, installiert 0.3.0 einmal von Hand; danach
+  aktualisiert sich die App wieder selbst.
 
 ## Neu in 0.2.0
 
@@ -303,17 +306,33 @@ Für die APK zusätzlich den Android-Signierschlüssel hinterlegen
 übersprungen. Den Schlüssel gut aufbewahren – Updates müssen mit demselben
 Schlüssel signiert sein.
 
-Einmalig: den Updater-Signierschlüssel erzeugen (bleibt außerhalb des Repos)
-und seinen **Inhalt** auf GitHub unter *Settings → Secrets and variables →
-Actions* als `TAURI_SIGNING_PRIVATE_KEY` hinterlegen (hat der Schlüssel ein
-Passwort, zusätzlich `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`):
+Einmalig: den Updater-Signierschlüssel erzeugen (bleibt außerhalb des Repos,
+z. B. in `~/.awp-secrets/`) und auf GitHub unter *Settings → Secrets and
+variables → Actions* hinterlegen – den **Inhalt** der Schlüsseldatei als
+`TAURI_SIGNING_PRIVATE_KEY`, das Passwort als
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`:
 
 ```bash
-cargo tauri signer generate -w "%USERPROFILE%\.awp-secrets\awp-updater.key" --ci
+cd shell
+npx tauri signer generate -w ~/.awp-secrets/awp-updater.key -p '<Passwort>' --ci
+gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.awp-secrets/awp-updater.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD   # fragt nach dem Passwort
 ```
 
-Der öffentliche Schlüssel steht in `tauri.conf.json` (`plugins.updater.pubkey`)
-und muss dazu passen.
+Der öffentliche Schlüssel (`awp-updater.key.pub`) steht in `tauri.conf.json`
+(`plugins.updater.pubkey`) und muss dazu passen. Den privaten Schlüssel gut
+sichern: Apps, die mit diesem öffentlichen Schlüssel gebaut wurden, nehmen
+nur damit signierte Updates an.
+
+Lokal signiert bauen (z. B. das AppImage): `TAURI_SIGNING_PRIVATE_KEY` (Pfad
+oder Inhalt) und `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` setzen, dann
+`./build_linux.sh`.
+
+Für die APK zusätzlich den Android-Signierschlüssel hinterlegen
+(`ANDROID_KEYSTORE_BASE64` = `base64 -w0 awp-release.jks`,
+`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`); ohne ihn wird die APK
+übersprungen. Den Schlüssel gut aufbewahren – Updates müssen mit demselben
+Schlüssel signiert sein.
 
 Für jeden Release:
 
@@ -342,7 +361,8 @@ move /y ..\shell\src-tauri\binaries\core.exe ..\shell\src-tauri\binaries\core-x8
 cd ..\shell\ui
 npm run build
 cd ..
-set TAURI_SIGNING_PRIVATE_KEY=%USERPROFILE%\.awp-secrets\awp-updater.key
+set TAURI_SIGNING_PRIVATE_KEY=<Pfad zu awp-updater.key>
+set TAURI_SIGNING_PRIVATE_KEY_PASSWORD=<Passwort>
 set CI=true
 cargo tauri build
 ```
