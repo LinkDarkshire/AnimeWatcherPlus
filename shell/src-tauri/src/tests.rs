@@ -57,6 +57,26 @@ fn update_endpoint_for_one_version() {
 }
 
 #[test]
+fn programs_started_from_the_appimage_get_the_system_environment() {
+    let vars = [
+        ("APPDIR", "/tmp/.mount_X"),
+        ("GTK_PATH", "/tmp/.mount_X//usr/lib/gtk-3.0"),
+        ("XDG_DATA_DIRS", "/tmp/.mount_X/usr/share:/usr/share:/usr/local/share"),
+        ("LD_LIBRARY_PATH", "/tmp/.mount_X/usr/lib"),
+        ("HOME", "/home/u"),
+    ]
+    .map(|(k, v)| (k.to_string(), v.to_string()));
+    let changes: std::collections::HashMap<_, _> = crate::appimage_free_env(vars.clone().into_iter()).into_iter().collect();
+    assert_eq!(changes["GTK_PATH"], None);
+    assert_eq!(changes["APPDIR"], None);
+    assert_eq!(changes["XDG_DATA_DIRS"].as_deref(), Some("/usr/share:/usr/local/share"));
+    assert_eq!(changes["LD_LIBRARY_PATH"], None);
+    assert!(!changes.contains_key("HOME"));
+    // Outside an AppImage nothing changes.
+    assert!(crate::appimage_free_env(vars.into_iter().filter(|(k, _)| k != "APPDIR")).is_empty());
+}
+
+#[test]
 fn query_token_is_removed_before_forwarding() {
     assert_eq!(proxy::query_without_token(None), "");
     assert_eq!(proxy::query_without_token(Some("token=x")), "");
