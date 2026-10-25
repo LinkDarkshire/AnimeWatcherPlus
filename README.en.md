@@ -58,6 +58,18 @@ Android app.
   Releases for new versions at startup. On Linux as an AppImage that runs
   without installation.
 
+## New in 0.3.4
+
+- **Linux: no more freezes from emoji.** The WebKit in the AppImage crashed
+  on certain color emoji (e.g. flags) and the app froze; the affected font
+  (COLRv1) is hidden from the app's window, emoji show in Twemoji or
+  monochrome instead.
+- **Sending with a link resolver doesn't wait:** "send" answers at once;
+  "Active downloads" shows "resolving link", then the progress or why it
+  failed (at most 2 minutes for the whole chain).
+- **Several tags at once** in the library filter (anime with all of them).
+- **Version info** under Settings → Version (app and server).
+
 ## New in 0.3.3
 
 - **Plugins can no longer freeze the server:** every download plugin call
