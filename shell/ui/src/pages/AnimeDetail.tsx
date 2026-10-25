@@ -1,8 +1,7 @@
 import { Link, useNavigate, useParams } from "react-router-dom"
 import { useState } from "react"
 import { useAnime, useIdentifyAnime, useRefreshMetadata } from "@/api/hooks"
-import { openFolder } from "@/api/client"
-import { useCanOpenFolders } from "@/api/shell"
+import { useFolderOpener } from "@/api/shell"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,7 +13,7 @@ import { useT } from "@/i18n/I18nContext"
 
 export function AnimeDetail() {
   const t = useT()
-  const canOpenFolders = useCanOpenFolders()
+  const folders = useFolderOpener()
   const { id } = useParams()
   const animeId = id ? Number(id) : undefined
   const navigate = useNavigate()
@@ -35,8 +34,8 @@ export function AnimeDetail() {
         <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
           {t("animeDetail.back")}
         </Button>
-        {canOpenFolders && (
-          <Button variant="outline" size="sm" onClick={() => openFolder(anime.directory_path)}>
+        {folders.localPath(anime.directory_path) && (
+          <Button variant="outline" size="sm" onClick={() => folders.open(anime.directory_path)}>
             {t("animeDetail.openFolder")}
           </Button>
         )}

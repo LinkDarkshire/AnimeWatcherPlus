@@ -251,6 +251,10 @@ class DownloadRequest(Base):
     external_id: Mapped[str | None] = mapped_column(String, nullable=True)
     # Hidden from the active-downloads list by the user.
     dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # The download folder it was sent to (rescanned once it's done) and when
+    # its client first reported it finished.
+    folder_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

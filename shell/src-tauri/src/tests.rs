@@ -124,6 +124,7 @@ async fn pairs_logs_in_and_proxies() {
             internet_url: None,
             device_id,
             tls_fingerprint: Some(fingerprint.clone()),
+            folder_mappings: Vec::new(),
         },
         keys.clone(),
     ));

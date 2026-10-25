@@ -436,7 +436,20 @@ export function useDownloadPlugins() {
   return useQuery({
     queryKey: ["download-plugins"],
     queryFn: () => api.get<DownloadPluginsResponse>("/api/v1/downloads/plugins"),
-    staleTime: Infinity, // only changes with a core restart
+    staleTime: Infinity, // only changes with a reload or a core restart
+  })
+}
+
+/** Reads the plugins folder again (a plugin added while the app or the
+ * server is running). */
+export function useReloadPlugins() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post<DownloadPluginsResponse>("/api/v1/downloads/plugins/reload"),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["download-plugins"], data)
+      queryClient.invalidateQueries({ queryKey: ["download-integrations"] })
+    },
   })
 }
 
@@ -522,6 +535,22 @@ export function useActiveDownloads() {
     queryFn: () => api.get<ActiveDownload[]>("/api/v1/downloads/active"),
     refetchInterval: (query) =>
       query.state.data?.some((d) => ["queued", "downloading"].includes(d.status.state)) ? 5_000 : 60_000,
+  })
+}
+
+export interface ClearFinishedResult {
+  hidden: number
+  removed_from_clients: number
+  errors: string[]
+}
+
+/** Hides every download that is done and removes the finished ones from
+ * their client's list too (JDownloader, ...); the files stay. */
+export function useClearFinishedDownloads() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post<ClearFinishedResult>("/api/v1/downloads/requests/clear-finished"),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["downloads-active"] }),
   })
 }
 

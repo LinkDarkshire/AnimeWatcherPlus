@@ -31,8 +31,15 @@ fn generate_token() -> String {
 /// through would turn this command into "run any executable".
 #[tauri::command]
 fn open_folder(path: String) -> Result<(), String> {
-    if !std::path::Path::new(&path).is_dir() {
-        return Err(format!("not a directory: {path}"));
+    // A folder on a server, reached over SMB (Linux/macOS file managers open
+    // smb:// themselves). Still never anything executable: only directories
+    // and smb:// addresses.
+    let is_smb = path.get(..6).is_some_and(|p| p.eq_ignore_ascii_case("smb://"));
+    if !is_smb && !std::path::Path::new(&path).is_dir() {
+        return Err(format!("Ordner nicht gefunden: {path}"));
+    }
+    if is_smb && cfg!(target_os = "windows") {
+        return Err("Unter Windows den Ordner als \\\\server\\freigabe angeben".into());
     }
     let result = if cfg!(target_os = "windows") {
         Command::new("explorer").arg(&path).spawn()
@@ -120,6 +127,7 @@ pub fn run() {
             server::server_pull_library,
             server::qr_svg,
             server::take_shared_text,
+            server::server_set_folder_mappings,
             restart_app,
             stop_core,
         ])

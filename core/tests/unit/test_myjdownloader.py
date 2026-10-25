@@ -189,3 +189,21 @@ async def test_add_returns_package_and_link_as_handle() -> None:
     handle = await _client().add("https://mega.nz/file/x#k", destination=None, package_name="Show - 01")
 
     assert json.loads(handle) == {"package": "Show - 01", "link": "https://mega.nz/file/x#k"}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_remove_takes_finished_downloads_off_the_list() -> None:
+    """By link where known, otherwise by package; removeLinks never deletes files."""
+    server = FakeMyJD(devices=[{"id": "dev1", "name": "JD"}])
+    server.packages = {
+        "/downloadsV2/queryPackages": [{"name": "Show - 01", "uuid": 22}, {"name": "Other - 05", "uuid": 23}],
+        "/downloadsV2/queryLinks": [{"url": "https://mega.nz/file/abc#key", "uuid": 11, "packageUUID": 21}],
+    }
+    respx.route(url__startswith=API_URL).mock(side_effect=server.handle)
+    by_link = json.dumps({"package": "Renamed - 02", "link": "https://mega.nz/file/abc#key"})
+
+    await _client().remove(["Show - 01", by_link, "Gone - 09"])
+
+    _, params = server.calls[-1]
+    assert params == [[11], [22]]

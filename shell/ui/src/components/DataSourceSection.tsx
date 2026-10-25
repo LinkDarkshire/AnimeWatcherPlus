@@ -12,6 +12,7 @@ import {
   useShellConnection,
 } from "@/api/shell"
 import type { Folder } from "@/api/types"
+import type { FolderMapping } from "@/lib/folderMapping"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -68,6 +69,9 @@ export function DataSourceSection() {
         </p>
 
         {server && <ServerDetails server={server} onSaved={refresh} />}
+        {server && connection.mode === "server" && !mobile && (
+          <FolderMappingsEditor server={server} onSaved={refresh} />
+        )}
 
         {restartPending && (
           <div className="flex flex-wrap items-center gap-2 text-xs text-amber-600 dark:text-amber-400">
@@ -174,6 +178,68 @@ function ServerDetails({ server, onSaved }: { server: ServerConfig; onSaved: () 
         </div>
       </label>
       <p className={muted}>{t("dataSource.internetHint")}</p>
+      {save.isError && <p className="text-xs text-red-500">{errorMessage(save.error)}</p>}
+    </div>
+  )
+}
+
+/** How this PC reaches the server's folders (e.g. over SMB), so "open
+ * folder" works for anime and the plugins folder with a server too. */
+function FolderMappingsEditor({ server, onSaved }: { server: ServerConfig; onSaved: () => void }) {
+  const t = useT()
+  const [rows, setRows] = useState<FolderMapping[]>(server.folder_mappings ?? [])
+  useEffect(() => setRows(server.folder_mappings ?? []), [server.folder_mappings])
+  const folders = useFolders(true)
+  // Suggestions: the server's library folders and its data folder (plugins).
+  const suggestions = [...new Set([...(folders.data ?? []).map((f) => f.path), "/data"])]
+
+  const save = useMutation({
+    mutationFn: () => shell.setFolderMappings(rows.filter((r) => r.server.trim() && r.local.trim())),
+    onSuccess: onSaved,
+    meta: { showsOwnError: true },
+  })
+  const update = (index: number, change: Partial<FolderMapping>) =>
+    setRows(rows.map((row, i) => (i === index ? { ...row, ...change } : row)))
+
+  return (
+    <div className="space-y-2 rounded-md border border-[hsl(var(--border))] p-3">
+      <p className="text-xs font-medium">{t("dataSource.folderMappingsTitle")}</p>
+      <p className={muted}>{t("dataSource.folderMappingsHint")}</p>
+      <datalist id="server-folder-suggestions">
+        {suggestions.map((path) => (
+          <option key={path} value={path} />
+        ))}
+      </datalist>
+      {rows.map((row, index) => (
+        <div key={index} className="flex flex-col gap-1 sm:flex-row sm:items-center">
+          <Input
+            list="server-folder-suggestions"
+            value={row.server}
+            placeholder="/media/Anime"
+            className="font-mono text-xs"
+            onChange={(e) => update(index, { server: e.target.value })}
+          />
+          <span className="hidden text-xs sm:inline">→</span>
+          <Input
+            value={row.local}
+            placeholder={navigator.userAgent.includes("Windows") ? "\\\\nas\\anime" : "smb://nas/anime"}
+            className="font-mono text-xs"
+            onChange={(e) => update(index, { local: e.target.value })}
+          />
+          <Button size="sm" variant="ghost" onClick={() => setRows(rows.filter((_, i) => i !== index))}>
+            ✕
+          </Button>
+        </div>
+      ))}
+      <div className="flex gap-2">
+        <Button size="sm" variant="outline" onClick={() => setRows([...rows, { server: "", local: "" }])}>
+          {t("dataSource.folderMappingsAdd")}
+        </Button>
+        <Button size="sm" disabled={save.isPending} onClick={() => save.mutate()}>
+          {t("common.save")}
+        </Button>
+      </div>
+      {save.isSuccess && <p className="text-xs text-emerald-600">{t("common.saved")}</p>}
       {save.isError && <p className="text-xs text-red-500">{errorMessage(save.error)}</p>}
     </div>
   )

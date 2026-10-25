@@ -187,6 +187,11 @@ export function useLiveEvents() {
         case "scan.progress":
           invalidate("folders")
           break
+        case "downloads.finished":
+          // The download folder is being rescanned; the new file turns up
+          // for sorting and renaming through the scan's own events.
+          invalidate("downloads-active", "downloads-wanted")
+          break
         default:
           break
       }

@@ -27,6 +27,16 @@ pub struct ServerConfig {
     /// SHA-256 of the server's own certificate, pinned when pairing (LAN).
     #[serde(default)]
     pub tls_fingerprint: Option<String>,
+    /// How this device reaches the server's folders (e.g. over SMB), for
+    /// "open folder": server path prefix -> local path or smb:// address.
+    #[serde(default)]
+    pub folder_mappings: Vec<FolderMapping>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct FolderMapping {
+    pub server: String,
+    pub local: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default, Debug)]

@@ -72,6 +72,8 @@ class DownloadPluginRegistry:
     classes: dict[str, type[_Plugin]] = field(default_factory=dict)
     builtin_ids: set[str] = field(default_factory=set)
     load_errors: list[PluginLoadError] = field(default_factory=list)
+    # plugin id -> the file it came from (plugins folder only)
+    files: dict[str, str] = field(default_factory=dict)
 
     def register(self, plugin_class: type[_Plugin], *, builtin: bool = False) -> None:
         plugin_id = getattr(plugin_class, "id", None)
@@ -128,6 +130,7 @@ class DownloadPluginRegistry:
                 continue
             if issubclass(obj, (DownloadClient, SearchSource)):
                 self.register(obj)
+                self.files[obj.id] = path.name
                 found += 1
                 logger.info("download_plugin_loaded", plugin_id=obj.id, file=path.name)
         return found

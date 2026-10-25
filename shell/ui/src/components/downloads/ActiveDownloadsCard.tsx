@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom"
-import { useActiveDownloads, useDismissDownload } from "@/api/hooks"
+import { useActiveDownloads, useClearFinishedDownloads, useDismissDownload } from "@/api/hooks"
 import type { ActiveDownload, DownloadState } from "@/api/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -38,13 +38,33 @@ export function ActiveDownloadsCard() {
   const t = useT()
   const { data: downloads } = useActiveDownloads()
   const dismiss = useDismissDownload()
+  const clear = useClearFinishedDownloads()
 
   if (!downloads || downloads.length === 0) return null
+  const doneCount = downloads.filter((d) => d.status.state === "finished" || d.status.state === "seeding").length
 
   return (
     <Card>
       <CardContent className="space-y-2 p-4">
-        <p className="text-sm font-medium">{t("downloads.activeTitle")}</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-medium">{t("downloads.activeTitle")}</p>
+          {doneCount > 0 && (
+            <Button size="sm" variant="outline" disabled={clear.isPending} onClick={() => clear.mutate()}>
+              {t("downloads.clearFinished", { count: doneCount })}
+            </Button>
+          )}
+        </div>
+        {clear.data && (
+          <p className="text-xs text-[hsl(var(--muted-foreground))]">
+            {t("downloads.clearedFinished", {
+              hidden: clear.data.hidden,
+              removed: clear.data.removed_from_clients,
+            })}
+            {clear.data.errors.length > 0 && (
+              <span className="block text-amber-600 dark:text-amber-400">{clear.data.errors.join(" · ")}</span>
+            )}
+          </p>
+        )}
         {downloads.map((download) => (
           <ActiveRow
             key={download.request_id}

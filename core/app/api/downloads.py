@@ -4,6 +4,7 @@ import datetime as dt
 from dataclasses import asdict
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -13,8 +14,10 @@ from app.api.deps import get_app_state, get_db
 from app.db.models import DownloadIntegration
 from app.downloads import service
 from app.downloads.base import PluginError, SeriesHit
-from app.downloads.registry import kind_of
+from app.downloads.registry import build_registry, kind_of
 from app.state import AppState
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/downloads", tags=["downloads"])
 
@@ -38,6 +41,8 @@ class PluginOut(BaseModel):
     description: str
     builtin: bool
     settings_schema: list[SettingFieldOut]
+    # The file in the plugins folder; None for built-in plugins.
+    file: str | None = None
 
 
 class PluginLoadErrorOut(BaseModel):
@@ -105,12 +110,22 @@ async def list_plugins(state: AppState = Depends(get_app_state)) -> PluginsRespo
                 description=cls.description,
                 builtin=plugin_id in registry.builtin_ids,
                 settings_schema=[SettingFieldOut(**asdict(f)) for f in cls.settings_schema],
+                file=registry.files.get(plugin_id),
             )
             for plugin_id, cls in sorted(registry.classes.items(), key=lambda item: item[1].name.casefold())
         ],
         load_errors=[PluginLoadErrorOut(**asdict(e)) for e in registry.load_errors],
         plugins_folder=str(state.settings.plugins_dir),
     )
+
+
+@router.post("/plugins/reload", response_model=PluginsResponse)
+async def reload_plugins(state: AppState = Depends(get_app_state)) -> PluginsResponse:
+    """Reads the plugins folder again -- for a plugin added or changed while
+    the app (or the server) is running."""
+    state.download_plugins = build_registry(state.settings.plugins_dir)
+    logger.info("download_plugins_reloaded", count=len(state.download_plugins.files))
+    return await list_plugins(state)
 
 
 @router.get("/integrations", response_model=list[IntegrationOut])
@@ -431,6 +446,21 @@ async def get_active_downloads(
         ActiveDownloadOut.model_validate(asdict(item))
         for item in await service.active_downloads(session, state.download_plugins)
     ]
+
+
+class ClearFinishedOut(BaseModel):
+    hidden: int
+    removed_from_clients: int
+    errors: list[str]
+
+
+@router.post("/requests/clear-finished", response_model=ClearFinishedOut)
+async def clear_finished_downloads(
+    session: AsyncSession = Depends(get_db), state: AppState = Depends(get_app_state)
+) -> ClearFinishedOut:
+    """Hides all downloads that are done, and removes the finished ones from
+    their client's list (JDownloader, ...) as well -- the files stay."""
+    return ClearFinishedOut(**asdict(await service.clear_finished(session, state.download_plugins)))
 
 
 @router.post("/requests/{request_id}/dismiss", status_code=204)

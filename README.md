@@ -189,7 +189,10 @@ Zwei Arten von Plugin-Klassen (Schnittstelle: `core/app/downloads/base.py`):
   Format, Größe, Hoster).
 
 Eigene Plugins: eine `.py`-Datei pro Plugin in den Ordner `plugins` im
-App-Datenverzeichnis legen und die App neu starten. Die Einstellungen, die
+App-Datenverzeichnis legen (mit Server: in dessen `data/plugins`) und unter
+*Einstellungen → Download-Plugins* auf **Neu laden** klicken. Dort steht
+auch, welche Plugins gefunden wurden und warum eine Datei nicht geladen
+werden konnte. Die Einstellungen, die
 ein Plugin in `settings_schema` angibt, erscheinen automatisch als Formular
 auf der Download-Seite. Kommentierte Vorlagen in `core/plugin_examples/`:
 
