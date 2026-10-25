@@ -61,8 +61,14 @@ mehrere PCs und die Android-App darauf zu.
   Start auf neue Versionen in den GitHub Releases. Unter Linux als AppImage,
   das ohne Installation läuft.
 
-## Neu in 0.3.1
+## Neu in 0.3.2
 
+- **Link-Auflöser (neu in 0.3.2):** neue Plugin-Art neben Download-Clients
+  und Such-Quellen. Ein Auflöser macht aus einem Zwischen-Link (z. B. einem
+  Kurz-Link) den eigentlichen Link, bevor er an den Download-Client geht;
+  Suchergebnisse, die sonst im Browser geöffnet werden müssten, lassen sich
+  dann direkt senden. Vorlage: `core/plugin_examples/link_resolver_template.py`
+  (folgt den Weiterleitungen von bit.ly, t.co & Co.).
 - **Updates über den Server:** Mit Server reicht es, den Server zu
   aktualisieren – Desktop-Apps installieren beim Verbinden genau dessen
   Version, Android bietet die passende APK an. Hinweis, wenn eine App neuer
@@ -72,14 +78,15 @@ mehrere PCs und die Android-App darauf zu.
   bleiben). Ist ein Download fertig, wird der Download-Ordner automatisch neu
   durchsucht – die Folge steht gleich zum Einsortieren bereit.
 - **Plugins:** Übersicht unter *Einstellungen → Download-Plugins* (gefundene
-  Plugins, Ladefehler mit Grund), **Neu laden** ohne Neustart, neue
-  Plugin-Art **Link-Auflöser** mit Vorlage für Kurz-Links.
+  Plugins, Ladefehler mit Grund) und **Neu laden** ohne Neustart.
 - **Ordner öffnen mit Server:** Zuordnung der Server-Ordner zu einer
   SMB-Freigabe o. Ä. pro Gerät.
 - App-Symbol aus dem neuen Logo; unter Linux eigener Programmname
   (`animewatcherplus`) statt des generischen `app`.
 - Behoben: Nach einem Neustart der App (Datenquelle wechseln, Update) lief
   der lokale Core unsichtbar weiter.
+
+(0.3.1 wurde nicht veröffentlicht; alle Neuerungen seit 0.3.0 stehen hier.)
 
 ## Neu in 0.3.0
 
