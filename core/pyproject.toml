@@ -21,6 +21,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+resolvers = [
+    "curl_cffi>=0.7",
+]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
