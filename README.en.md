@@ -58,6 +58,20 @@ Android app.
   Releases for new versions at startup. On Linux as an AppImage that runs
   without installation.
 
+## New in 0.3.1
+
+- **Updates through the server:** with a server, updating the server is
+  enough – desktop apps install exactly its version when they connect,
+  Android offers the matching APK.
+- **Downloads:** "hide finished" also removes finished downloads from
+  JDownloader/qBittorrent/Transmission (files stay); a finished download
+  triggers a rescan of the download folder.
+- **Plugins:** overview in Settings with load errors, reload without
+  restart, new **link resolver** plugin kind with a template.
+- Open server folders via an SMB share (per-device mapping).
+- New app icon; on Linux the binary is `animewatcherplus` instead of `app`.
+- Fixed: the local core kept running after the app restarted.
+
 ## New in 0.3.0
 
 - **Server mode:** the library as a Docker container on the NAS, where the

@@ -61,6 +61,26 @@ mehrere PCs und die Android-App darauf zu.
   Start auf neue Versionen in den GitHub Releases. Unter Linux als AppImage,
   das ohne Installation läuft.
 
+## Neu in 0.3.1
+
+- **Updates über den Server:** Mit Server reicht es, den Server zu
+  aktualisieren – Desktop-Apps installieren beim Verbinden genau dessen
+  Version, Android bietet die passende APK an. Hinweis, wenn eine App neuer
+  als der Server ist bzw. (für Admins) eine neue Server-Version erschienen ist.
+- **Downloads:** „Fertige ausblenden“ räumt die Liste auf und entfernt
+  fertige Downloads auch aus JDownloader/qBittorrent/Transmission (Dateien
+  bleiben). Ist ein Download fertig, wird der Download-Ordner automatisch neu
+  durchsucht – die Folge steht gleich zum Einsortieren bereit.
+- **Plugins:** Übersicht unter *Einstellungen → Download-Plugins* (gefundene
+  Plugins, Ladefehler mit Grund), **Neu laden** ohne Neustart, neue
+  Plugin-Art **Link-Auflöser** mit Vorlage für Kurz-Links.
+- **Ordner öffnen mit Server:** Zuordnung der Server-Ordner zu einer
+  SMB-Freigabe o. Ä. pro Gerät.
+- App-Symbol aus dem neuen Logo; unter Linux eigener Programmname
+  (`animewatcherplus`) statt des generischen `app`.
+- Behoben: Nach einem Neustart der App (Datenquelle wechseln, Update) lief
+  der lokale Core unsichtbar weiter.
+
 ## Neu in 0.3.0
 
 - **Server-Modus:** die Bibliothek als Docker-Container auf dem NAS, dort
