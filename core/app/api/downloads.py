@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_app_state, get_db
 from app.db.models import DownloadIntegration
-from app.downloads import service
+from app.downloads import handover, service
 from app.downloads.base import PluginError, SeriesHit
 from app.downloads.isolation import run_plugin
 from app.downloads.registry import build_registry, kind_of
@@ -391,6 +391,9 @@ class SendIn(TargetIn):
 class SendResponse(BaseModel):
     title: str
     client_name: str
+    # A link resolver works on the link in the background; the download
+    # list shows how it's going.
+    resolving: bool = False
 
 
 @router.post("/send", response_model=SendResponse)
@@ -415,7 +418,10 @@ async def send(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except PluginError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return SendResponse(title=request.title, client_name=request.client_name)
+    resolving = request.handover == "pending"
+    if resolving:
+        handover.start(state, request.id)
+    return SendResponse(title=request.title, client_name=request.client_name, resolving=resolving)
 
 
 # --- Progress ------------------------------------------------------------------------

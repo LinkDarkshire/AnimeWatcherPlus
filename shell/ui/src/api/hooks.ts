@@ -519,7 +519,7 @@ export function useSendDownload() {
   return useMutation({
     meta: { showsOwnError: true },
     mutationFn: (payload: DownloadTarget & { client_id: number; link: string; folder_id?: number }) =>
-      api.post<{ title: string; client_name: string }>("/api/v1/downloads/send", payload),
+      api.post<{ title: string; client_name: string; resolving: boolean }>("/api/v1/downloads/send", payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["downloads-wanted"] })
       queryClient.invalidateQueries({ queryKey: ["downloads-active"] })
@@ -534,7 +534,7 @@ export function useActiveDownloads() {
     queryKey: ["downloads-active"],
     queryFn: () => api.get<ActiveDownload[]>("/api/v1/downloads/active"),
     refetchInterval: (query) =>
-      query.state.data?.some((d) => ["queued", "downloading"].includes(d.status.state)) ? 5_000 : 60_000,
+      query.state.data?.some((d) => ["resolving", "queued", "downloading"].includes(d.status.state)) ? 5_000 : 60_000,
   })
 }
 

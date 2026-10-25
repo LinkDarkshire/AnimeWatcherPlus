@@ -9,6 +9,7 @@ import { useT } from "@/i18n/I18nContext"
 import type { TranslationKey } from "@/i18n/translations"
 
 const STATE_LABELS: Record<DownloadState, TranslationKey> = {
+  resolving: "downloads.state.resolving",
   queued: "downloads.state.queued",
   downloading: "downloads.state.downloading",
   paused: "downloads.state.paused",
@@ -19,6 +20,7 @@ const STATE_LABELS: Record<DownloadState, TranslationKey> = {
 }
 
 const STATE_COLORS: Partial<Record<DownloadState, string>> = {
+  resolving: "animate-pulse bg-amber-500",
   downloading: "bg-sky-500",
   seeding: "bg-emerald-500",
   finished: "bg-emerald-500",

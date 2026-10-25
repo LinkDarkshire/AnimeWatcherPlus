@@ -176,7 +176,11 @@ export function SendPanel({ target }: { target: DownloadTarget }) {
       </div>
 
       {send.isSuccess && (
-        <p className="text-xs text-emerald-600">{t("downloads.sent", { client: send.data.client_name })}</p>
+        <p className="text-xs text-emerald-600">
+          {send.data.resolving
+            ? t("downloads.sentResolving", { client: send.data.client_name })
+            : t("downloads.sent", { client: send.data.client_name })}
+        </p>
       )}
       {send.isError && <p className="text-xs text-red-500">{t("downloads.failed", { message: send.error.message })}</p>}
     </div>

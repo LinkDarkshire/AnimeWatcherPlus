@@ -526,6 +526,58 @@ async def _destination(session: AsyncSession, folder_id: int | None) -> Folder |
     )
 
 
+# All resolvers of one link together may take this long -- a link they can't
+# get in time is reported as failed instead of keeping the download waiting.
+RESOLVE_LIMIT_S = 120
+# A request still pending after this was interrupted (e.g. by a restart).
+HANDOVER_GIVE_UP = dt.timedelta(minutes=6)
+
+
+def _created_at(row: DownloadRequest) -> dt.datetime:
+    # SQLite hands back naive datetimes; they are stored in UTC.
+    created = row.created_at
+    return created if created.tzinfo else created.replace(tzinfo=dt.UTC)
+
+
+async def _needs_resolving(session: AsyncSession, registry: DownloadPluginRegistry, link: str) -> bool:
+    integrations = await _resolver_integrations(session, registry)
+    if not integrations:
+        return False
+
+    async def responsible(resolvers: _Resolvers) -> bool:
+        return resolvers.responsible(link) is not None
+
+    try:
+        return await run_plugin(
+            lambda: _Resolvers(_make_resolvers(registry, integrations)), responsible, limit_s=15
+        )
+    except Exception:
+        logger.exception("link_resolver_check_failed")
+        return False
+
+
+async def _hand_over(
+    registry: DownloadPluginRegistry,
+    integration: DownloadIntegration,
+    link: str,
+    destination: str | None,
+    package_name: str,
+) -> str | None:
+    """Gives the link to the client; returns its handle for progress."""
+
+    async def add(plugin: Any) -> str | None:
+        if not plugin.accepts(link):
+            raise DownloadError(f"'{integration.name}' kann diesen Link nicht verarbeiten")
+        handle: str | None = await plugin.add(link, destination=destination, package_name=package_name)
+        return handle
+
+    try:
+        handle = await run_plugin(lambda: instantiate(registry, integration), add, limit_s=120)
+    except TimeoutError as exc:
+        raise DownloadError(f"'{integration.name}' antwortet nicht (Zeitüberschreitung)") from exc
+    return handle if isinstance(handle, str) and handle else None
+
+
 async def send(
     session: AsyncSession,
     registry: DownloadPluginRegistry,
@@ -535,10 +587,13 @@ async def send(
     target: Target,
     folder_id: int | None = None,
 ) -> DownloadRequest:
+    """Sends a link to a download client. A link a resolver has to work on
+    first isn't waited for: the request is recorded as pending and
+    `complete_handover` does the rest in the background -- the download
+    list shows how it's going."""
     link = link.strip()
     if not link:
         raise DownloadError("Kein Link angegeben")
-    link = await resolve_link(session, registry, link)
     integration = await session.get(DownloadIntegration, client_integration_id)
     if integration is None:
         raise DownloadError("Download-Client nicht gefunden")
@@ -546,19 +601,6 @@ async def send(
     if plugin_class is None or not issubclass(plugin_class, DownloadClient):
         raise DownloadError(f"'{integration.name}' ist kein Download-Client")
     destination = await _destination(session, folder_id)
-
-    async def hand_over(plugin: Any) -> str | None:
-        if not plugin.accepts(link):
-            raise DownloadError(f"'{integration.name}' kann diesen Link nicht verarbeiten")
-        handle: str | None = await plugin.add(
-            link, destination=destination.path if destination else None, package_name=target.package_name
-        )
-        return handle
-
-    try:
-        handle = await run_plugin(lambda: instantiate(registry, integration), hand_over, limit_s=120)
-    except TimeoutError as exc:
-        raise DownloadError(f"'{integration.name}' antwortet nicht (Zeitüberschreitung)") from exc
 
     request = DownloadRequest(
         anime_id=target.anime_id,
@@ -568,13 +610,49 @@ async def send(
         link=link,
         client_name=integration.name,
         client_integration_id=integration.id,
-        external_id=handle if isinstance(handle, str) and handle else None,
         folder_id=destination.id if destination else None,
     )
+    if await _needs_resolving(session, registry, link):
+        request.handover = "pending"
+    else:
+        request.external_id = await _hand_over(
+            registry, integration, link, destination.path if destination else None, target.package_name
+        )
     session.add(request)
     await session.commit()
-    logger.info("download_requested", client=integration.name, title=target.package_name)
+    logger.info("download_requested", client=integration.name, title=target.package_name, handover=request.handover)
     return request
+
+
+async def complete_handover(session: AsyncSession, registry: DownloadPluginRegistry, request_id: int) -> None:
+    """Background part of `send` for links a resolver works on: resolve,
+    hand over, and record how it went."""
+    request = await session.get(DownloadRequest, request_id)
+    if request is None or request.handover != "pending":
+        return
+    try:
+        integration = await session.get(DownloadIntegration, request.client_integration_id or -1)
+        if integration is None:
+            raise DownloadError("Download-Client nicht gefunden")
+        destination = await session.get(Folder, request.folder_id) if request.folder_id is not None else None
+        try:
+            link = await asyncio.wait_for(resolve_link(session, registry, request.link), timeout=RESOLVE_LIMIT_S)
+        except TimeoutError as exc:
+            raise DownloadError(
+                f"Link konnte nicht in {RESOLVE_LIMIT_S // 60} Minuten aufgelöst werden -- im Browser öffnen"
+            ) from exc
+        request.external_id = await _hand_over(
+            registry, integration, link, destination.path if destination else None, request.title
+        )
+        request.link = link
+        request.handover = "sent"
+        logger.info("download_handed_over", client=integration.name, title=request.title)
+    except Exception as exc:  # also user plugin code: always end in a visible state
+        if not isinstance(exc, DownloadError | PluginError):
+            logger.exception("download_handover_failed", title=request.title)
+        request.handover = "failed"
+        request.handover_error = str(exc) or type(exc).__name__
+    await session.commit()
 
 
 # --- Progress ----------------------------------------------------------------------
@@ -630,7 +708,14 @@ async def poll_statuses(
     statuses: dict[int, DownloadStatus] = {}
     by_client: dict[int, list[DownloadRequest]] = {}
     for row in rows:
-        if row.client_integration_id is not None and row.external_id:
+        if row.handover == "pending" and _created_at(row) < dt.datetime.now(dt.UTC) - HANDOVER_GIVE_UP:
+            # Left pending by a restart in the middle of it.
+            statuses[row.id] = DownloadStatus("error", message="Übergabe abgebrochen -- bitte erneut senden")
+        elif row.handover == "pending":
+            statuses[row.id] = DownloadStatus("resolving", message="Link wird aufgelöst …")
+        elif row.handover == "failed":
+            statuses[row.id] = DownloadStatus("error", message=row.handover_error or "Übergabe fehlgeschlagen")
+        elif row.client_integration_id is not None and row.external_id:
             by_client.setdefault(row.client_integration_id, []).append(row)
         else:
             statuses[row.id] = DownloadStatus("unknown", message="Dieser Client meldet keinen Fortschritt")

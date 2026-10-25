@@ -7,6 +7,7 @@ import { TitleOrderPicker } from "@/components/TitleOrderPicker"
 import { DataSourceSection } from "@/components/DataSourceSection"
 import { DevicesSection } from "@/components/DevicesSection"
 import { PluginsSection } from "@/components/PluginsSection"
+import { VersionsSection } from "@/components/VersionsSection"
 import { DEFAULT_TITLE_ORDER, normalizeTitleOrder, type TitleVariant } from "@/lib/titleOrder"
 import { useLanguage, useT } from "@/i18n/I18nContext"
 import { LANGUAGES, type Language } from "@/i18n/translations"
@@ -103,6 +104,7 @@ export function Settings() {
       <h1 className="text-lg font-semibold">{t("nav.settings")}</h1>
       {isLoading && <p className="text-sm text-[hsl(var(--muted-foreground))]">{t("common.loading")}</p>}
 
+      <VersionsSection />
       <DataSourceSection />
       <DevicesSection />
       <PluginsSection />

@@ -290,7 +290,7 @@ async def test_send_hands_link_to_client_and_records_request(client, db_session,
         json={"client_id": jd["id"], "link": "https://host/ep1.mkv", "anime_id": anime_id, "episode": 1},
     )
     assert sent.status_code == 200
-    assert sent.json() == {"title": "Show - 01", "client_name": "JD"}
+    assert sent.json() == {"title": "Show - 01", "client_name": "JD", "resolving": False}
     [job] = list(watch.glob("*.crawljob"))
     assert f"downloadFolder={downloads_dir}" in job.read_text(encoding="utf-8")
 
@@ -573,6 +573,7 @@ class _ShortLinks(LinkResolver):
 async def test_link_resolver_turns_short_links_into_sendable_ones(client, db_session, tmp_path, state) -> None:
     state.download_plugins.register(_ShortLinks)
     state.download_plugins.register(_ProgressClient)
+    _use_test_db(state, db_session)
     state.download_plugins.register(_TwoStage)  # its releases link to https://short/x, meant for the browser
     anime_id = await _anime_with_episodes(db_session, tmp_path, "Show", 9, [(1, None)])
     progress = (await client.post("/api/v1/downloads/integrations", json={"plugin_id": "progress_client", "name": "P"})).json()
@@ -595,10 +596,19 @@ async def test_link_resolver_turns_short_links_into_sendable_ones(client, db_ses
     )
     assert [r["needs_browser"] for r in listed.json()["results"]] == [False]
 
+    # Sending answers at once; the resolving happens in the background and
+    # shows in the download list.
     sent = await client.post("/api/v1/downloads/send", json={"client_id": progress["id"], "link": "https://short/a", **target})
-    assert sent.status_code == 200
+    assert sent.status_code == 200 and sent.json()["resolving"] is True
+    [pending] = (await client.get("/api/v1/downloads/active")).json()
+    assert pending["status"]["state"] == "resolving"
+
+    await _finish_handovers(state, db_session)
+
     rows = (await db_session.execute(DownloadRequest.__table__.select())).all()
-    assert [r.link for r in rows] == ["https://host/file.mkv"]
+    assert [(r.link, r.handover, r.external_id) for r in rows] == [
+        ("https://host/file.mkv", "sent", "h-https://host/file.mkv")
+    ]
 
 
 def test_link_resolver_template_handles_its_hosts() -> None:
@@ -655,3 +665,56 @@ async def test_a_blocking_plugin_does_not_freeze_the_server(client, db_session, 
     assert [r["title"] for r in response.json()["results"]] == ["Slow 1"]
     # The 1.5 s sleep ran on the plugin's own thread; the server kept going.
     assert longest_gap < 0.5
+
+
+async def _finish_handovers(state, db_session) -> None:
+    """Waits for the background handovers, run against the test database."""
+    import asyncio
+
+    from app.downloads import handover
+
+    await asyncio.gather(*handover._running)
+
+
+def _use_test_db(state, db_session) -> None:
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def sessions():
+        yield db_session
+
+    state.session_factory = sessions
+
+
+class _BrokenResolver(LinkResolver):
+    id = "broken_resolver"
+    name = "Kaputt"
+
+    def handles(self, link: str) -> bool:
+        return "shrt" in link
+
+    async def resolve(self, link: str) -> str:
+        from app.downloads import LinkResolverError
+
+        raise LinkResolverError("Zwischenseite verlangt ein Captcha")
+
+
+@pytest.mark.asyncio
+async def test_failed_resolving_shows_why_in_the_download_list(client, db_session, tmp_path, state) -> None:
+    state.download_plugins.register(_BrokenResolver)
+    state.download_plugins.register(_ProgressClient)
+    _use_test_db(state, db_session)
+    anime_id = await _anime_with_episodes(db_session, tmp_path, "Show", 9, [(1, None)])
+    progress = (await client.post("/api/v1/downloads/integrations", json={"plugin_id": "progress_client", "name": "P"})).json()
+    await client.post("/api/v1/downloads/integrations", json={"plugin_id": "broken_resolver", "name": "Kaputt"})
+
+    sent = await client.post(
+        "/api/v1/downloads/send",
+        json={"client_id": progress["id"], "link": "https://shrt/x", "anime_id": anime_id, "episode": 1},
+    )
+    assert sent.json()["resolving"] is True
+    await _finish_handovers(state, db_session)
+
+    [failed] = (await client.get("/api/v1/downloads/active")).json()
+    assert failed["status"]["state"] == "error"
+    assert "Captcha" in failed["status"]["message"]

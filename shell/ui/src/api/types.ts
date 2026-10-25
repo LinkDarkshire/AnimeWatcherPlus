@@ -366,7 +366,7 @@ export interface DownloadSearchResponse {
   notes: Record<string, string>
 }
 
-export type DownloadState = "queued" | "downloading" | "paused" | "seeding" | "finished" | "error" | "unknown"
+export type DownloadState = "resolving" | "queued" | "downloading" | "paused" | "seeding" | "finished" | "error" | "unknown"
 
 export interface DownloadStatus {
   state: DownloadState
