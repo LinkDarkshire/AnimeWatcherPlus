@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Sequence
 
 from sqlalchemy import column, delete, func, select, text, update
 from sqlalchemy import table as sa_table
@@ -366,11 +367,11 @@ class AnimeRepo:
         query: str | None,
         year: int | None,
         media_type: str | None,
-        tag: str | None,
         status_filter: str | None,
         page: int,
         size: int,
         missing_only: bool = False,
+        tags: Sequence[str] = (),
     ) -> tuple[list[Anime], int]:
         stmt = select(Anime)
         if query:
@@ -388,9 +389,10 @@ class AnimeRepo:
             stmt = stmt.where(Anime.ident_status == status_filter)
         if missing_only:
             stmt = stmt.where(Anime.id.in_(anime_ids_with_missing_episodes))
-        if tag is not None:
-            stmt = stmt.join(AnimeTag, AnimeTag.anime_id == Anime.id).join(Tag, Tag.id == AnimeTag.tag_id).where(
-                Tag.name == tag
+        # Every tag must be there (AND): one subquery per tag.
+        for tag in dict.fromkeys(t for t in tags if t):
+            stmt = stmt.where(
+                Anime.id.in_(select(AnimeTag.anime_id).join(Tag, Tag.id == AnimeTag.tag_id).where(Tag.name == tag))
             )
 
         count_stmt = select(func.count()).select_from(stmt.subquery())

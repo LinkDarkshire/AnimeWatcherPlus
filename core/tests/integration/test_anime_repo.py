@@ -126,3 +126,35 @@ async def test_list_duplicate_groups_ignores_unique_anidb_ids(db_session) -> Non
 @pytest.mark.asyncio
 async def test_recompute_duplicate_flags_noop_for_missing_anidb_id(db_session) -> None:
     await AnimeRepo(db_session).recompute_duplicate_flags(None)  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_search_with_several_tags_needs_all_of_them(db_session) -> None:
+    folder = await FolderRepo(db_session).create("/tmp/awp-tags", "content", "Content")
+    repo = AnimeRepo(db_session)
+    tags = {name: Tag(name=name) for name in ("isekai", "comedy", "romance")}
+    db_session.add_all(tags.values())
+    await db_session.flush()
+    shows = {
+        "Both": ("isekai", "comedy"),
+        "All three": ("isekai", "comedy", "romance"),
+        "Only isekai": ("isekai",),
+    }
+    for title, names in shows.items():
+        anime = await repo.create_pending(folder.id, f"/tmp/awp-tags/{title}", title)
+        for name in names:
+            db_session.add(AnimeTag(anime_id=anime.id, tag_id=tags[name].id, weight=100))
+    await db_session.commit()
+
+    async def titles(*wanted: str) -> list[str]:
+        items, total = await repo.search(
+            query=None, year=None, media_type=None, status_filter=None, page=1, size=50, tags=wanted
+        )
+        assert total == len(items)
+        return sorted(a.title for a in items)
+
+    assert await titles("isekai") == ["All three", "Both", "Only isekai"]
+    assert await titles("isekai", "comedy") == ["All three", "Both"]
+    assert await titles("isekai", "comedy", "romance") == ["All three"]
+    assert await titles("comedy", "comedy") == ["All three", "Both"]  # duplicates don't matter
+    assert await titles() == ["All three", "Both", "Only isekai"]

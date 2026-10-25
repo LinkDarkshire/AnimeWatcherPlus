@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useAnimesPage, useSettings, useTags } from "@/api/hooks"
+import { TagFilter } from "@/components/TagFilter"
 import { AnimeCard } from "@/components/AnimeCard"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -28,7 +29,7 @@ export function Library() {
   ]
 
   const [searchParams, setSearchParams] = useSearchParams()
-  const tag = searchParams.get("tag") ?? ""
+  const selectedTags = searchParams.getAll("tag")
   const page = Math.max(1, Number(searchParams.get("page")) || 1)
   const setPage = (next: number) => {
     viewState.scrollTop = 0
@@ -65,8 +66,11 @@ export function Library() {
     setMissingOnlyState(value)
     resetToFirstPage()
   }
-  const setTag = (value: string) =>
-    resetToFirstPage((params) => (value ? params.set("tag", value) : params.delete("tag")))
+  const setTags = (values: string[]) =>
+    resetToFirstPage((params) => {
+      params.delete("tag")
+      for (const value of values) params.append("tag", value)
+    })
 
   const { data: settings } = useSettings()
   const storedSize = settings?.values[PAGE_SIZE_SETTING]
@@ -76,7 +80,7 @@ export function Library() {
   const { data, isLoading, isError, isPlaceholderData } = useAnimesPage({
     query: query || undefined,
     status: status || undefined,
-    tag: tag || undefined,
+    tags: selectedTags,
     missing: missingOnly || undefined,
     page,
     size: pageSize,
@@ -141,18 +145,7 @@ export function Library() {
             </option>
           ))}
         </select>
-        <select
-          value={tag}
-          onChange={(e) => setTag(e.target.value)}
-          className="h-9 rounded-md border border-[hsl(var(--border))] bg-transparent px-2 text-sm"
-        >
-          <option value="">{t("library.allTags")}</option>
-          {tagsData?.map((tag) => (
-            <option key={tag.id} value={tag.name}>
-              {tag.name} ({tag.anime_count})
-            </option>
-          ))}
-        </select>
+        <TagFilter tags={tagsData ?? []} selected={selectedTags} onChange={setTags} />
         <label className="flex items-center gap-1.5 text-sm">
           <input type="checkbox" checked={missingOnly} onChange={(e) => setMissingOnly(e.target.checked)} />
           {t("library.missingOnly")}

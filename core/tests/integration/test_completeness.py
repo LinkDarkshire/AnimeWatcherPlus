@@ -183,10 +183,10 @@ async def test_search_missing_only_filter(db_session, tmp_path) -> None:
 
     repo = AnimeRepo(db_session)
     all_items, all_total = await repo.search(
-        query=None, year=None, media_type=None, tag=None, status_filter=None, page=1, size=50
+        query=None, year=None, media_type=None, status_filter=None, page=1, size=50
     )
     missing_items, missing_total = await repo.search(
-        query=None, year=None, media_type=None, tag=None, status_filter=None, page=1, size=50,
+        query=None, year=None, media_type=None, status_filter=None, page=1, size=50,
         missing_only=True,
     )
 

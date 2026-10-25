@@ -1,6 +1,7 @@
 export interface AnimeFilters {
   query?: string
-  tag?: string
+  /** Anime that have every one of these tags. */
+  tags?: string[]
   year?: number
   type?: string
   status?: string
@@ -12,7 +13,7 @@ export interface AnimeFilters {
 export function toQueryString(filters: AnimeFilters): string {
   const params = new URLSearchParams()
   if (filters.query) params.set("query", filters.query)
-  if (filters.tag) params.set("tag", filters.tag)
+  for (const tag of filters.tags ?? []) params.append("tag", tag)
   if (filters.year) params.set("year", String(filters.year))
   if (filters.type) params.set("type", filters.type)
   if (filters.status) params.set("status", filters.status)

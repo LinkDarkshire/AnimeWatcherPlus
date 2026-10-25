@@ -153,7 +153,8 @@ def _to_detail(anime: Anime, staleness_threshold_days: float) -> AnimeDetail:
 @router.get("/animes", response_model=AnimeListResponse)
 async def list_animes(
     query: str | None = None,
-    tag: str | None = None,
+    # Repeatable (?tag=a&tag=b): only anime that have every one of them.
+    tag: list[str] = Query(default_factory=list),
     year: int | None = None,
     type: str | None = None,
     status: str | None = None,
@@ -167,7 +168,7 @@ async def list_animes(
         query=query,
         year=year,
         media_type=type,
-        tag=tag,
+        tags=tag,
         status_filter=status,
         page=page,
         size=size,

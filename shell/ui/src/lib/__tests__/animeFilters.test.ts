@@ -7,10 +7,10 @@ describe("toQueryString", () => {
   })
 
   it("includes only set filters", () => {
-    const qs = toQueryString({ query: "Mushoku", tag: "isekai" })
+    const qs = toQueryString({ query: "Mushoku", tags: ["isekai"] })
     const params = new URLSearchParams(qs)
     expect(params.get("query")).toBe("Mushoku")
-    expect(params.get("tag")).toBe("isekai")
+    expect(params.getAll("tag")).toEqual(["isekai"])
     expect(params.get("year")).toBeNull()
     expect(params.get("page")).toBe("1")
   })
@@ -28,5 +28,10 @@ describe("toQueryString", () => {
     expect(params.get("year")).toBeNull()
     expect(params.get("type")).toBeNull()
     expect(params.get("status")).toBeNull()
+  })
+
+  it("sends several tags as repeated parameters", () => {
+    const params = new URLSearchParams(toQueryString({ tags: ["isekai", "comedy"] }))
+    expect(params.getAll("tag")).toEqual(["isekai", "comedy"])
   })
 })
