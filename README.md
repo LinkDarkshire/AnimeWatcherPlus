@@ -61,6 +61,21 @@ mehrere PCs und die Android-App darauf zu.
   Start auf neue Versionen in den GitHub Releases. Unter Linux als AppImage,
   das ohne Installation läuft.
 
+## Neu in 0.3.4
+
+- **Linux: kein Einfrieren mehr durch Emojis.** Die WebKit-Version im
+  AppImage stürzte bei bestimmten Farb-Emojis (z. B. Flaggen) ab – die App
+  stand dann still. Die App blendet die betroffene Schrift (COLRv1) für ihr
+  Fenster aus; Emojis erscheinen stattdessen in Twemoji bzw. einfarbig.
+- **Senden mit Link-Auflöser ohne Warten:** Muss ein Link erst aufgelöst
+  werden, antwortet „Senden“ sofort; unter „Aktive Downloads“ steht „Link
+  wird aufgelöst“, danach der Fortschritt oder der Grund, warum es nicht
+  geklappt hat (höchstens 2 Minuten für die ganze Kette).
+- **Mehrere Tags gleichzeitig:** In der Bibliothek lassen sich beliebig
+  viele Tags wählen – angezeigt werden Animes, die alle davon haben.
+- **Versionsanzeige:** *Einstellungen → Version* zeigt die Version der App
+  und die des Servers.
+
 ## Neu in 0.3.3
 
 - **Plugins können den Server nicht mehr einfrieren:** Jeder Aufruf eines
