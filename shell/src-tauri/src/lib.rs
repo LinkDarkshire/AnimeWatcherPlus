@@ -1,3 +1,5 @@
+#[cfg(desktop)]
+mod app_update;
 mod connection;
 #[cfg(desktop)]
 mod core_process;
@@ -130,6 +132,10 @@ pub fn run() {
             server::server_set_folder_mappings,
             restart_app,
             stop_core,
+            #[cfg(desktop)]
+            app_update::app_update_check,
+            #[cfg(desktop)]
+            app_update::app_update_install,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

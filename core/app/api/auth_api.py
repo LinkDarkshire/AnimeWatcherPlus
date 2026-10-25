@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import __version__
 from app.api.deps import get_app_state, get_db
 from app.auth import require_admin, require_auth
 from app.db.models import Device
@@ -86,6 +87,9 @@ async def token(
 class MeOut(BaseModel):
     mode: str
     server_name: str
+    # The apps update themselves to this version when connected (see
+    # UpdateGate in the UI).
+    server_version: str = __version__
     device_id: int | None = None
     device_name: str | None = None
     is_admin: bool

@@ -381,14 +381,29 @@ eine Datei nicht geladen werden konnte.
 
 ### Updates
 
-- **Desktop:** automatisch – beim Start meldet die App neue Versionen.
-- **Server:**
-  ```bash
-  cd ~/animewatcherplus
-  docker compose pull && docker compose up -d
-  ```
-  Desktop und Server sollten dieselbe Version haben.
-- **Android:** neue APK aus den Releases über die alte installieren.
+**Mit Server reicht es, den Server zu aktualisieren** – die Apps ziehen
+beim nächsten Verbinden nach:
+
+```bash
+cd ~/animewatcherplus
+docker compose pull && docker compose up -d
+```
+
+- **Desktop:** Beim Start fragt die App den Server nach seiner Version und
+  installiert genau diese (signiert, automatisch; danach Neustart). Ist die
+  App neuer als der Server, erscheint oben ein Hinweis, den Server zu
+  aktualisieren.
+- **Android:** Die App meldet die neue Version und lädt die passende APK
+  herunter; über die alte installieren, die Kopplung bleibt.
+- **Admin-Geräte** sehen oben einen Hinweis, sobald eine neue
+  Server-Version erschienen ist.
+- **Desktop ohne Server:** aktualisiert sich beim Start auf die neueste
+  Version.
+
+Der Server aktualisiert sich bewusst nicht selbst (dafür bräuchte der
+Container Zugriff auf Docker, also volle Rechte auf dem NAS). Wer das
+automatisieren möchte, kann z. B. [Watchtower](https://containrrr.dev/watchtower/)
+nutzen.
 
 ### Sicherung
 

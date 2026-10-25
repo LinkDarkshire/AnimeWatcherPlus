@@ -24,6 +24,7 @@ import { useLiveEvents } from "@/api/useLiveEvents"
 import { shell, useShellConnection } from "@/api/shell"
 import { MobileOnboarding } from "@/components/MobileOnboarding"
 import { ServerStatusBanner } from "@/components/ServerStatusBanner"
+import { VersionNotice } from "@/components/VersionNotice"
 import { useSharedText } from "@/lib/useSharedText"
 import { usePendingActionsCount } from "@/api/hooks"
 import { AniDbActivity } from "@/components/AniDbActivity"
@@ -104,6 +105,7 @@ function MainApp({ mobile }: { mobile: boolean }) {
         <AniDbActivity />
       </header>
       <ServerStatusBanner />
+      <VersionNotice />
       <AniDbBanBanner />
       <EmptyFolderPrompt />
       <main className="flex-1 overflow-x-hidden overflow-y-auto">

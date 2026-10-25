@@ -85,6 +85,8 @@ export interface Me {
   device_id: number | null
   device_name: string | null
   is_admin: boolean
+  /** The apps update themselves to this version when connected. */
+  server_version: string
 }
 
 /** A shell command; its errors become ApiErrors (status 0: no answer). */

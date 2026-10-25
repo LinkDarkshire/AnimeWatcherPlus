@@ -8,6 +8,7 @@ from app.providers.base import ProviderRegistry
 from app.security.store import SecurityState
 from app.services.jobs import EventBus, JobQueue
 from app.services.scanner import ScannerService
+from app.services.server_release import ReleaseChecker
 
 
 @dataclass
@@ -21,3 +22,5 @@ class AppState:
     download_plugins: DownloadPluginRegistry = field(default_factory=lambda: build_registry(None))
     # Server mode only: sessions, login challenges, pairing codes.
     security: SecurityState = field(default_factory=SecurityState)
+    # Server mode: looks up the latest release for admins (made on first use).
+    release_checker: ReleaseChecker | None = None
