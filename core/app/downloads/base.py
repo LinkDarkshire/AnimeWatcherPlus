@@ -235,3 +235,25 @@ class TwoStageSearchSource(SearchSource):
         unambiguous."""
         hits = await self.search_series(query)
         return await self.list_releases(hits[0], query) if len(hits) == 1 else []
+
+
+class LinkResolverError(PluginError):
+    """A link resolver couldn't get the final link; the message is shown."""
+
+
+class LinkResolver(_Plugin):
+    """Turns an intermediate link -- a short link, a redirect -- into the link
+    a download client can take. Before a link is sent, every enabled resolver
+    that ``handles`` it gets to ``resolve`` it (also several in a row, for
+    chains). Search results whose link a resolver handles can then be sent
+    directly instead of being opened in the browser."""
+
+    @abstractmethod
+    def handles(self, link: str) -> bool:
+        """Whether this resolver is responsible for the link (usually by its
+        host). Cheap: called for every search result."""
+
+    @abstractmethod
+    async def resolve(self, link: str) -> str:
+        """The final link. Raise LinkResolverError on failure."""
+

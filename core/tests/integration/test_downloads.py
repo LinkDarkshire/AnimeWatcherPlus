@@ -22,6 +22,7 @@ from app.downloads import (
     DownloadClient,
     DownloadClientError,
     DownloadStatus,
+    LinkResolver,
     NothingFound,
     SearchQuery,
     SearchResult,
@@ -554,3 +555,59 @@ async def test_plugins_added_while_running_appear_after_reload(client, state) ->
     assert late["file"] == "late.py" and late["builtin"] is False
     assert [e["file"] for e in after["load_errors"]] == ["broken.py"]
     assert all(p["file"] is None for p in after["plugins"] if p["builtin"])
+
+
+class _ShortLinks(LinkResolver):
+    id = "short_links"
+    name = "Short"
+
+    def handles(self, link: str) -> bool:
+        return link.startswith("https://short/")
+
+    async def resolve(self, link: str) -> str:
+        # A chain: short/a -> short/b -> the file.
+        return {"https://short/a": "https://short/b", "https://short/b": "https://host/file.mkv"}[link]
+
+
+@pytest.mark.asyncio
+async def test_link_resolver_turns_short_links_into_sendable_ones(client, db_session, tmp_path, state) -> None:
+    state.download_plugins.register(_ShortLinks)
+    state.download_plugins.register(_ProgressClient)
+    state.download_plugins.register(_TwoStage)  # its releases link to https://short/x, meant for the browser
+    anime_id = await _anime_with_episodes(db_session, tmp_path, "Show", 9, [(1, None)])
+    progress = (await client.post("/api/v1/downloads/integrations", json={"plugin_id": "progress_client", "name": "P"})).json()
+    await client.post("/api/v1/downloads/integrations", json={"plugin_id": "two_stage", "name": "TS"})
+
+    target = {"anime_id": anime_id, "episode": 1}
+    before = (await client.post("/api/v1/downloads/search", json=target)).json()
+    assert before["series"]  # two series: pick one first
+    hit = before["series"][0]
+    listed = await client.post(
+        "/api/v1/downloads/releases",
+        json={**target, "integration_id": hit["integration_id"], "series": {k: hit[k] for k in ("title", "url", "extra")}},
+    )
+    assert [r["needs_browser"] for r in listed.json()["results"]] == [True]  # no resolver yet
+
+    await client.post("/api/v1/downloads/integrations", json={"plugin_id": "short_links", "name": "Kurz"})
+    listed = await client.post(
+        "/api/v1/downloads/releases",
+        json={**target, "integration_id": hit["integration_id"], "series": {k: hit[k] for k in ("title", "url", "extra")}},
+    )
+    assert [r["needs_browser"] for r in listed.json()["results"]] == [False]
+
+    sent = await client.post("/api/v1/downloads/send", json={"client_id": progress["id"], "link": "https://short/a", **target})
+    assert sent.status_code == 200
+    rows = (await db_session.execute(DownloadRequest.__table__.select())).all()
+    assert [r.link for r in rows] == ["https://host/file.mkv"]
+
+
+def test_link_resolver_template_handles_its_hosts() -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("resolver_template", EXAMPLES / "link_resolver_template.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    resolver = module.RedirectResolver({"hosts": "bit.ly, t.co"})
+    assert resolver.handles("https://bit.ly/abc") and resolver.handles("https://www.t.co/x")
+    assert not resolver.handles("https://example.org/bit.ly")

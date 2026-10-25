@@ -9,7 +9,7 @@ from typing import Literal
 
 import structlog
 
-from app.downloads.base import DownloadClient, SearchSource, _Plugin
+from app.downloads.base import DownloadClient, LinkResolver, SearchSource, _Plugin
 from app.downloads.clients.jdownloader import JDownloaderClient
 from app.downloads.clients.myjdownloader import MyJDownloaderClient
 from app.downloads.clients.qbittorrent import QBittorrentClient
@@ -17,7 +17,7 @@ from app.downloads.clients.transmission import TransmissionClient
 
 logger = structlog.get_logger(__name__)
 
-PluginKind = Literal["client", "source"]
+PluginKind = Literal["client", "source", "resolver"]
 
 BUILTIN_PLUGINS: list[type[_Plugin]] = [
     QBittorrentClient,
@@ -30,31 +30,37 @@ PLUGINS_README = """AnimeWatcherPlus -- eigene Download-Plugins
 ==========================================
 
 Jede .py-Datei in diesem Ordner wird beim Start der App geladen. Jede darin
-definierte Unterklasse von DownloadClient oder SearchSource steht danach auf
-der Download-Seite unter "Einrichtung" zur Verfügung.
+definierte Unterklasse von DownloadClient, SearchSource oder LinkResolver
+steht danach auf der Download-Seite unter "Einrichtung" zur Verfügung.
 
 Vorlagen mit Erklärungen: core/plugin_examples/ im Quellcode-Repository.
 Die Schnittstelle selbst ist in core/app/downloads/base.py dokumentiert.
 
-Nach dem Hinzufügen oder Ändern einer Datei die App neu starten.
+Nach dem Hinzufügen oder Ändern einer Datei unter Einstellungen →
+Download-Plugins auf "Neu laden" klicken.
 
 
 AnimeWatcherPlus -- your own download plugins
 ==============================================
 
 Every .py file in this folder is loaded when the app starts. Each subclass
-of DownloadClient or SearchSource defined in it becomes available on the
-download page under "Einrichtung".
+of DownloadClient, SearchSource or LinkResolver defined in it becomes
+available on the download page under "Einrichtung".
 
 Annotated templates: core/plugin_examples/ in the source repository. The
 plugin interface is documented in core/app/downloads/base.py.
 
-Restart the app after adding or changing a file.
+After adding or changing a file, click "Reload" under Settings → Download
+plugins.
 """
 
 
 def kind_of(plugin_class: type[_Plugin]) -> PluginKind:
-    return "client" if issubclass(plugin_class, DownloadClient) else "source"
+    if issubclass(plugin_class, DownloadClient):
+        return "client"
+    if issubclass(plugin_class, LinkResolver):
+        return "resolver"
+    return "source"
 
 
 @dataclass
@@ -110,7 +116,7 @@ class DownloadPluginRegistry:
                 continue
             if not found:
                 self.load_errors.append(
-                    PluginLoadError(file=path.name, error="Keine DownloadClient-/SearchSource-Klasse gefunden")
+                    PluginLoadError(file=path.name, error="Keine DownloadClient-/SearchSource-/LinkResolver-Klasse gefunden")
                 )
 
     def _load_file(self, path: Path) -> int:
@@ -128,7 +134,7 @@ class DownloadPluginRegistry:
             # other plugins it imports.
             if obj.__module__ != module_name or inspect.isabstract(obj):
                 continue
-            if issubclass(obj, (DownloadClient, SearchSource)):
+            if issubclass(obj, (DownloadClient, SearchSource, LinkResolver)):
                 self.register(obj)
                 self.files[obj.id] = path.name
                 found += 1

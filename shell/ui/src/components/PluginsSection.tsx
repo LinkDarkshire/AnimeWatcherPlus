@@ -3,6 +3,7 @@ import { useFolderOpener, useShellConnection } from "@/api/shell"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { KIND_LABELS } from "@/lib/pluginKinds"
 import { useT } from "@/i18n/I18nContext"
 
 const muted = "text-xs text-[hsl(var(--muted-foreground))]"
@@ -53,9 +54,7 @@ export function PluginsSection() {
                     {plugin.file} · {plugin.id}
                   </p>
                 </div>
-                <Badge variant="outline">
-                  {plugin.kind === "client" ? t("plugins.kindClient") : t("plugins.kindSource")}
-                </Badge>
+                <Badge variant="outline">{t(KIND_LABELS[plugin.kind])}</Badge>
               </li>
             ))}
           </ul>

@@ -178,7 +178,7 @@ einem anderen Rechner, muss er in denselben Ordner speichern, den die App als
 Download-Ordner kennt. Den Pfad aus Sicht des Clients trägst du in dessen
 Einstellungen ein.
 
-Zwei Arten von Plugin-Klassen (Schnittstelle: `core/app/downloads/base.py`):
+Drei Arten von Plugin-Klassen (Schnittstelle: `core/app/downloads/base.py`):
 
 - **`DownloadClient`** nimmt Links entgegen und meldet optional den
   Fortschritt. Eingebaut: qBittorrent (Web-UI-API), Transmission (RPC) und
@@ -187,6 +187,10 @@ Zwei Arten von Plugin-Klassen (Schnittstelle: `core/app/downloads/base.py`):
 - **`SearchSource`** findet Links zu einer Folge oder Serie, wahlweise
   zweistufig: erst die Serie suchen, dann die Varianten pro Folge (Sprache,
   Format, Größe, Hoster).
+- **`LinkResolver`** macht aus einem Zwischen-Link (z. B. einem Kurz-Link)
+  den eigentlichen Link, bevor er an den Client geht. Ergebnisse, deren Link
+  ein Auflöser übernimmt, lassen sich direkt senden statt im Browser zu
+  öffnen.
 
 Eigene Plugins: eine `.py`-Datei pro Plugin in den Ordner `plugins` im
 App-Datenverzeichnis legen (mit Server: in dessen `data/plugins`) und unter
@@ -203,6 +207,8 @@ auf der Download-Seite. Kommentierte Vorlagen in `core/plugin_examples/`:
   endgültigen Link fügt man selbst ein.
 - `example_link_list.py` — Such-Quelle, die Links aus einer Textdatei liest.
 - `example_link_file_client.py` — Client, der Links in eine Datei schreibt.
+- `link_resolver_template.py` — Link-Auflöser, der den Weiterleitungen von
+  Kurz-Links (bit.ly, t.co, …) folgt; Vorlage für eigene Auflöser.
 
 In der installierten Windows-Version können Plugins nur Bibliotheken nutzen,
 die in der App enthalten sind (u. a. `httpx` und `beautifulsoup4`).
