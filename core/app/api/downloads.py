@@ -14,6 +14,7 @@ from app.api.deps import get_app_state, get_db
 from app.db.models import DownloadIntegration
 from app.downloads import service
 from app.downloads.base import PluginError, SeriesHit
+from app.downloads.isolation import run_plugin
 from app.downloads.registry import build_registry, kind_of
 from app.state import AppState
 
@@ -202,17 +203,19 @@ async def test_integration(
     if integration is None:
         raise HTTPException(status_code=404, detail="Eintrag nicht gefunden")
     try:
-        plugin = service.instantiate(state.download_plugins, integration)
+        await run_plugin(
+            lambda: service.instantiate(state.download_plugins, integration),
+            lambda plugin: plugin.test_connection(),
+            limit_s=60,
+        )
     except service.DownloadError as exc:
         return TestResult(ok=False, message=str(exc))
-    try:
-        await plugin.test_connection()
     except PluginError as exc:
         return TestResult(ok=False, message=str(exc))
+    except TimeoutError:
+        return TestResult(ok=False, message="Keine Antwort (Zeitüberschreitung)")
     except Exception as exc:
         return TestResult(ok=False, message=f"Interner Fehler: {type(exc).__name__}: {exc}")
-    finally:
-        await plugin.close()
     return TestResult(ok=True, message="Verbindung funktioniert")
 
 

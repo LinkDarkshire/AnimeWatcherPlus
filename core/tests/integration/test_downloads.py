@@ -611,3 +611,47 @@ def test_link_resolver_template_handles_its_hosts() -> None:
     resolver = module.RedirectResolver({"hosts": "bit.ly, t.co"})
     assert resolver.handles("https://bit.ly/abc") and resolver.handles("https://www.t.co/x")
     assert not resolver.handles("https://example.org/bit.ly")
+
+
+class _BlockingSource(SearchSource):
+    """Written like a careless plugin: a blocking call inside async code."""
+
+    id = "blocking_source"
+    name = "Blocking"
+
+    async def search(self, query: SearchQuery) -> list[SearchResult]:
+        import time
+
+        time.sleep(1.5)  # noqa: ASYNC251 - the point of this test
+        return [SearchResult(title="Slow 1", link="https://slow/1")]
+
+
+@pytest.mark.asyncio
+async def test_a_blocking_plugin_does_not_freeze_the_server(client, db_session, tmp_path, state) -> None:
+    import asyncio
+    import time
+
+    state.download_plugins.register(_BlockingSource)
+    anime_id = await _anime_with_episodes(db_session, tmp_path, "Show", 9, [(1, None)])
+    await client.post("/api/v1/downloads/integrations", json={"plugin_id": "blocking_source", "name": "B"})
+
+    longest_gap = 0.0
+    done = False
+
+    async def heartbeat() -> None:
+        nonlocal longest_gap
+        last = time.monotonic()
+        while not done:
+            await asyncio.sleep(0.05)
+            now = time.monotonic()
+            longest_gap = max(longest_gap, now - last)
+            last = now
+
+    beat = asyncio.create_task(heartbeat())
+    response = await client.post("/api/v1/downloads/search", json={"anime_id": anime_id, "episode": 1})
+    done = True
+    await beat
+
+    assert [r["title"] for r in response.json()["results"]] == ["Slow 1"]
+    # The 1.5 s sleep ran on the plugin's own thread; the server kept going.
+    assert longest_gap < 0.5

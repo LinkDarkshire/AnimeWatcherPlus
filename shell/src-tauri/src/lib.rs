@@ -24,6 +24,47 @@ fn generate_token() -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+/// Programs the desktop provides (file manager, browser via xdg-open),
+/// started without the AppImage's own environment: its GTK modules, library
+/// and data paths would be inherited by the browser or file manager, which
+/// then often fail to start (links and folders "do nothing").
+fn desktop_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    for (key, value) in appimage_free_env(std::env::vars()) {
+        match value {
+            Some(value) => command.env(key, value),
+            None => command.env_remove(key),
+        };
+    }
+    command
+}
+
+/// Changes to the environment for programs started from an AppImage:
+/// None removes a variable, Some sets it. Empty outside an AppImage.
+pub(crate) fn appimage_free_env(
+    vars: impl Iterator<Item = (String, String)>,
+) -> Vec<(String, Option<String>)> {
+    let vars: Vec<(String, String)> = vars.collect();
+    let Some(appdir) = vars.iter().find(|(k, _)| k == "APPDIR").map(|(_, v)| v.clone()) else {
+        return Vec::new();
+    };
+    // Set by the AppImage's runtime hooks (linuxdeploy GTK plugin, AppRun).
+    const OWN: [&str; 14] = [
+        "APPDIR", "APPIMAGE", "ARGV0", "OWD", "GTK_DATA_PREFIX", "GTK_THEME", "GSETTINGS_SCHEMA_DIR",
+        "GI_TYPELIB_PATH", "GIO_MODULE_DIR", "GTK_EXE_PREFIX", "GTK_PATH", "GTK_IM_MODULE_FILE",
+        "GDK_PIXBUF_MODULE_FILE", "GST_PLUGIN_SYSTEM_PATH",
+    ];
+    let mut changes: Vec<(String, Option<String>)> = OWN.iter().map(|k| (k.to_string(), None)).collect();
+    // Path lists: keep the system's entries, drop the AppImage's own.
+    for (key, value) in &vars {
+        if matches!(key.as_str(), "XDG_DATA_DIRS" | "LD_LIBRARY_PATH" | "PATH" | "PYTHONPATH") {
+            let kept: Vec<&str> = value.split(':').filter(|p| !p.is_empty() && !p.starts_with(&appdir)).collect();
+            changes.push((key.clone(), if kept.is_empty() { None } else { Some(kept.join(":")) }));
+        }
+    }
+    changes
+}
+
 /// Reveals an anime's directory in the OS's native file manager, so a
 /// misidentified/duplicate entry can be inspected or fixed by hand without
 /// re-typing its (often long, network-share) path.
@@ -48,7 +89,7 @@ fn open_folder(path: String) -> Result<(), String> {
     } else if cfg!(target_os = "macos") {
         Command::new("open").arg(&path).spawn()
     } else {
-        Command::new("xdg-open").arg(&path).spawn()
+        desktop_command("xdg-open").arg(&path).spawn()
     };
     result.map(|_| ()).map_err(|e| e.to_string())
 }
@@ -68,7 +109,7 @@ fn open_url(url: String) -> Result<(), String> {
     } else if cfg!(target_os = "macos") {
         Command::new("open").arg(&url).spawn()
     } else {
-        Command::new("xdg-open").arg(&url).spawn()
+        desktop_command("xdg-open").arg(&url).spawn()
     };
     result.map(|_| ()).map_err(|e| e.to_string())
 }

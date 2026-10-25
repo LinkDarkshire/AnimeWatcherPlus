@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any
 
 import structlog
@@ -32,6 +33,7 @@ from app.downloads.base import (
     TwoStageSearchSource,
     _Plugin,
 )
+from app.downloads.isolation import run_plugin
 from app.downloads.registry import DownloadPluginRegistry, kind_of
 from app.services import wishlist
 from app.services.sorter import sanitize_filename_component
@@ -338,70 +340,103 @@ async def _guarded(outcome: SearchOutcome, source_name: str, coro: Any) -> Any:
 MAX_RESOLVE_STEPS = 5
 
 
-async def _resolvers(session: AsyncSession, registry: DownloadPluginRegistry) -> list[tuple[str, LinkResolver]]:
-    """The enabled resolvers, instantiated (close them after use)."""
+async def _resolver_integrations(session: AsyncSession, registry: DownloadPluginRegistry) -> list[DownloadIntegration]:
+    return await _enabled(session, registry, "resolver")
+
+
+def _make_resolvers(
+    registry: DownloadPluginRegistry, integrations: list[DownloadIntegration]
+) -> list[tuple[str, LinkResolver]]:
     found: list[tuple[str, LinkResolver]] = []
-    for integration in await _enabled(session, registry, "resolver"):
+    for integration in integrations:
         plugin = instantiate(registry, integration)
         if isinstance(plugin, LinkResolver):
             found.append((integration.name, plugin))
-        else:
-            await plugin.close()
     return found
 
 
-def _handled_by(resolvers: list[tuple[str, LinkResolver]], link: str) -> tuple[str, LinkResolver] | None:
-    for name, resolver in resolvers:
-        try:
-            if resolver.handles(link):
-                return name, resolver
-        except Exception:  # user plugin code: just not responsible then
-            logger.exception("link_resolver_handles_failed", resolver=name)
-    return None
+class _Resolvers:
+    """All enabled resolvers as one object, so they live and close together
+    on the worker thread (see isolation.py)."""
+
+    def __init__(self, resolvers: list[tuple[str, LinkResolver]]) -> None:
+        self.resolvers = resolvers
+
+    def responsible(self, link: str) -> tuple[str, LinkResolver] | None:
+        for name, resolver in self.resolvers:
+            try:
+                if resolver.handles(link):
+                    return name, resolver
+            except Exception:  # user plugin code: just not responsible then
+                logger.exception("link_resolver_handles_failed", resolver=name)
+        return None
+
+    async def close(self) -> None:
+        for _, resolver in self.resolvers:
+            await resolver.close()
 
 
 async def resolve_link(session: AsyncSession, registry: DownloadPluginRegistry, link: str) -> str:
     """The link after every responsible resolver had its turn (also chains,
     up to a few steps). Unchanged if none is responsible."""
-    resolvers = await _resolvers(session, registry)
-    try:
-        for _ in range(MAX_RESOLVE_STEPS):
-            match = _handled_by(resolvers, link)
-            if match is None:
-                break
-            name, resolver = match
-            try:
-                resolved = (await asyncio.wait_for(resolver.resolve(link), timeout=60)).strip()
-            except PluginError as exc:
-                raise DownloadError(f"{name}: {exc}") from exc
-            except TimeoutError as exc:
-                raise DownloadError(f"{name}: Zeitüberschreitung beim Auflösen") from exc
-            except Exception as exc:  # user plugin code
-                logger.exception("link_resolver_failed", resolver=name)
-                raise DownloadError(f"{name}: {type(exc).__name__}: {exc}") from exc
-            if not resolved or resolved == link:
-                break
-            logger.info("link_resolved", resolver=name)
-            link = resolved
-    finally:
-        for _, resolver in resolvers:
-            await resolver.close()
+    integrations = await _resolver_integrations(session, registry)
+    if not integrations:
+        return link
+
+    async def step(resolvers: _Resolvers, *, current: str) -> tuple[str, str] | None:
+        match = resolvers.responsible(current)
+        if match is None:
+            return None
+        name, resolver = match
+        try:
+            return name, (await resolver.resolve(current)).strip()
+        except PluginError as exc:
+            raise DownloadError(f"{name}: {exc}") from exc
+        except Exception as exc:  # user plugin code
+            logger.exception("link_resolver_failed", resolver=name)
+            raise DownloadError(f"{name}: {type(exc).__name__}: {exc}") from exc
+
+    def make() -> _Resolvers:
+        return _Resolvers(_make_resolvers(registry, integrations))
+
+    for _ in range(MAX_RESOLVE_STEPS):
+        try:
+            outcome = await run_plugin(make, partial(step, current=link), limit_s=60)
+        except TimeoutError as exc:
+            raise DownloadError("Zeitüberschreitung beim Auflösen des Links") from exc
+        if outcome is None:
+            break
+        name, resolved = outcome
+        if not resolved or resolved == link:
+            break
+        logger.info("link_resolved", resolver=name)
+        link = resolved
     return link
 
 
 async def _mark_resolvable(session: AsyncSession, registry: DownloadPluginRegistry, outcome: SearchOutcome) -> None:
     """Results meant for the browser can be sent directly when a resolver
     takes care of their link."""
-    if not any(r.result.needs_browser for r in outcome.results):
+    candidates = [r for r in outcome.results if r.result.needs_browser and r.result.kind == "download"]
+    if not candidates:
         return
-    resolvers = await _resolvers(session, registry)
+    integrations = await _resolver_integrations(session, registry)
+    if not integrations:
+        return
+
+    async def handled(resolvers: _Resolvers) -> set[str]:
+        return {r.result.link for r in candidates if resolvers.responsible(r.result.link)}
+
     try:
-        for r in outcome.results:
-            if r.result.needs_browser and r.result.kind == "download" and _handled_by(resolvers, r.result.link):
-                r.result.needs_browser = False
-    finally:
-        for _, resolver in resolvers:
-            await resolver.close()
+        links = await run_plugin(
+            lambda: _Resolvers(_make_resolvers(registry, integrations)), handled, limit_s=15
+        )
+    except Exception:
+        logger.exception("link_resolver_check_failed")
+        return
+    for r in candidates:
+        if r.result.link in links:
+            r.result.needs_browser = False
 
 
 async def search(session: AsyncSession, registry: DownloadPluginRegistry, target: Target) -> SearchOutcome:
@@ -412,26 +447,27 @@ async def search(session: AsyncSession, registry: DownloadPluginRegistry, target
     sources = await _enabled(session, registry, "source")
     outcome = SearchOutcome()
 
-    async def run(integration: DownloadIntegration) -> None:
-        plugin = instantiate(registry, integration)
+    async def ask(plugin: Any) -> tuple[list[SeriesHit], list[SearchResult]]:
+        """(series to pick from, results) -- runs on the plugin's thread."""
+        if isinstance(plugin, TwoStageSearchSource):
+            hits = await plugin.search_series(query)
+            if len(hits) == 1:
+                # Unambiguous: skip the pick and go straight to the releases.
+                return [], await plugin.list_releases(hits[0], query)
+            return hits, []
         assert isinstance(plugin, SearchSource)
+        return [], await plugin.search(query)
+
+    async def run(integration: DownloadIntegration) -> None:
         name = integration.name
-        try:
-            if isinstance(plugin, TwoStageSearchSource):
-                hits = await _guarded(outcome, name, plugin.search_series(query)) or []
-                if len(hits) == 1:
-                    # Unambiguous: skip the pick and go straight to the releases.
-                    results = await _guarded(outcome, name, plugin.list_releases(hits[0], query)) or []
-                    outcome.results.extend(SourceResult(source_name=name, result=r) for r in results)
-                else:
-                    outcome.series.extend(
-                        SourceSeries(integration_id=integration.id, source_name=name, hit=hit) for hit in hits
-                    )
-            else:
-                results = await _guarded(outcome, name, plugin.search(query)) or []
-                outcome.results.extend(SourceResult(source_name=name, result=r) for r in results)
-        finally:
-            await plugin.close()
+        found = await _guarded(
+            outcome, name, run_plugin(lambda: instantiate(registry, integration), ask, limit_s=None)
+        )
+        if found is None:
+            return
+        hits, results = found
+        outcome.series.extend(SourceSeries(integration_id=integration.id, source_name=name, hit=hit) for hit in hits)
+        outcome.results.extend(SourceResult(source_name=name, result=r) for r in results)
 
     await asyncio.gather(*(run(integration) for integration in sources))
     await _mark_resolvable(session, registry, outcome)
@@ -449,16 +485,23 @@ async def releases(
     integration = await session.get(DownloadIntegration, integration_id)
     if integration is None:
         raise DownloadError("Quelle nicht gefunden")
-    plugin = instantiate(registry, integration)
-    if not isinstance(plugin, TwoStageSearchSource):
-        await plugin.close()
+    plugin_class = registry.get(integration.plugin_id)
+    if plugin_class is None or not issubclass(plugin_class, TwoStageSearchSource):
         raise DownloadError(f"'{integration.name}' hat keine Serienauswahl")
     query = SearchQuery(titles=target.titles, anidb_id=target.anidb_id, episode=target.episode)
     outcome = SearchOutcome()
-    try:
-        results = await _guarded(outcome, integration.name, plugin.list_releases(hit, query)) or []
-    finally:
-        await plugin.close()
+    results = (
+        await _guarded(
+            outcome,
+            integration.name,
+            run_plugin(
+                lambda: instantiate(registry, integration),
+                lambda plugin: plugin.list_releases(hit, query),
+                limit_s=None,
+            ),
+        )
+        or []
+    )
     outcome.results.extend(SourceResult(source_name=integration.name, result=r) for r in results)
     await _mark_resolvable(session, registry, outcome)
     return outcome
@@ -499,18 +542,23 @@ async def send(
     integration = await session.get(DownloadIntegration, client_integration_id)
     if integration is None:
         raise DownloadError("Download-Client nicht gefunden")
-    plugin = instantiate(registry, integration)
-    if not isinstance(plugin, DownloadClient):
+    plugin_class = registry.get(integration.plugin_id)
+    if plugin_class is None or not issubclass(plugin_class, DownloadClient):
         raise DownloadError(f"'{integration.name}' ist kein Download-Client")
     destination = await _destination(session, folder_id)
-    try:
+
+    async def hand_over(plugin: Any) -> str | None:
         if not plugin.accepts(link):
             raise DownloadError(f"'{integration.name}' kann diesen Link nicht verarbeiten")
-        handle = await plugin.add(
+        handle: str | None = await plugin.add(
             link, destination=destination.path if destination else None, package_name=target.package_name
         )
-    finally:
-        await plugin.close()
+        return handle
+
+    try:
+        handle = await run_plugin(lambda: instantiate(registry, integration), hand_over, limit_s=120)
+    except TimeoutError as exc:
+        raise DownloadError(f"'{integration.name}' antwortet nicht (Zeitüberschreitung)") from exc
 
     request = DownloadRequest(
         anime_id=target.anime_id,
@@ -558,20 +606,19 @@ async def _recent(session: AsyncSession, now: dt.datetime) -> list[DownloadReque
     )
 
 
-async def _with_client(
+async def _client_integration(
     session: AsyncSession, registry: DownloadPluginRegistry, integration_id: int
-) -> tuple[DownloadIntegration | None, DownloadClient | str]:
+) -> DownloadIntegration | str:
     """The configured client, or why there is none."""
     integration = await session.get(DownloadIntegration, integration_id)
     if integration is None:
-        return None, "Client wurde entfernt"
-    try:
-        plugin = instantiate(registry, integration)
-    except DownloadError as exc:
-        return integration, str(exc)
-    if not isinstance(plugin, DownloadClient):
-        return integration, "Kein Download-Client"
-    return integration, plugin
+        return "Client wurde entfernt"
+    plugin_class = registry.get(integration.plugin_id)
+    if plugin_class is None:
+        return f"Plugin '{integration.plugin_id}' ist nicht (mehr) installiert"
+    if not issubclass(plugin_class, DownloadClient):
+        return "Kein Download-Client"
+    return integration
 
 
 async def poll_statuses(
@@ -593,12 +640,15 @@ async def poll_statuses(
             for r in requests:
                 statuses[r.id] = DownloadStatus("unknown", message=message)
 
-        integration, plugin = await _with_client(session, registry, integration_id)
-        if isinstance(plugin, str) or integration is None:
-            mark_all(plugin if isinstance(plugin, str) else "Client wurde entfernt")
+        integration = await _client_integration(session, registry, integration_id)
+        if isinstance(integration, str):
+            mark_all(integration)
             return
+        handles = [r.external_id or "" for r in requests]
         try:
-            found = await asyncio.wait_for(plugin.status([r.external_id or "" for r in requests]), timeout=30)
+            found = await run_plugin(
+                lambda: instantiate(registry, integration), lambda plugin: plugin.status(handles), limit_s=30
+            )
         except PluginError as exc:
             mark_all(f"Status nicht abrufbar: {exc}")
             return
@@ -609,8 +659,6 @@ async def poll_statuses(
             logger.exception("download_status_failed", client=integration.name)
             mark_all(f"Status nicht abrufbar: {type(exc).__name__}: {exc}")
             return
-        finally:
-            await plugin.close()
         for r in requests:
             statuses[r.id] = found.get(r.external_id or "") or DownloadStatus(
                 "unknown", message=f"Nicht (mehr) in {integration.name} gefunden"
@@ -653,6 +701,10 @@ class ClearResult:
     errors: list[str] = field(default_factory=list)
 
 
+async def _remove(plugin: Any, *, handles: list[str]) -> None:
+    await plugin.remove(handles)
+
+
 async def clear_finished(session: AsyncSession, registry: DownloadPluginRegistry) -> ClearResult:
     """Hides every download that is done, and removes the finished ones from
     their client's list too (seeding torrents stay in the client)."""
@@ -671,17 +723,16 @@ async def clear_finished(session: AsyncSession, registry: DownloadPluginRegistry
     await session.commit()
 
     for integration_id, requests in to_remove.items():
-        integration, plugin = await _with_client(session, registry, integration_id)
-        if isinstance(plugin, str) or integration is None:
+        integration = await _client_integration(session, registry, integration_id)
+        if isinstance(integration, str):
             continue
+        handles = [r.external_id or "" for r in requests]
         try:
-            await asyncio.wait_for(plugin.remove([r.external_id or "" for r in requests]), timeout=30)
+            await run_plugin(partial(instantiate, registry, integration), partial(_remove, handles=handles), limit_s=30)
             result.removed_from_clients += len(requests)
         except Exception as exc:  # also user plugin code: the list is cleared regardless
             logger.warning("download_client_cleanup_failed", client=integration.name, error=str(exc))
-            result.errors.append(f"{integration.name}: {exc}")
-        finally:
-            await plugin.close()
+            result.errors.append(f"{integration.name}: {exc or type(exc).__name__}")
     logger.info("downloads_cleared", hidden=result.hidden, removed=result.removed_from_clients)
     return result
 
