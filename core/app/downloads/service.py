@@ -21,6 +21,7 @@ from app.db.models import (
 from app.downloads.base import (
     DownloadClient,
     DownloadStatus,
+    LinkResolver,
     NothingFound,
     PluginError,
     SearchQuery,
@@ -332,6 +333,77 @@ async def _guarded(outcome: SearchOutcome, source_name: str, coro: Any) -> Any:
     return None
 
 
+# --- Link resolvers ------------------------------------------------------------------
+
+MAX_RESOLVE_STEPS = 5
+
+
+async def _resolvers(session: AsyncSession, registry: DownloadPluginRegistry) -> list[tuple[str, LinkResolver]]:
+    """The enabled resolvers, instantiated (close them after use)."""
+    found: list[tuple[str, LinkResolver]] = []
+    for integration in await _enabled(session, registry, "resolver"):
+        plugin = instantiate(registry, integration)
+        if isinstance(plugin, LinkResolver):
+            found.append((integration.name, plugin))
+        else:
+            await plugin.close()
+    return found
+
+
+def _handled_by(resolvers: list[tuple[str, LinkResolver]], link: str) -> tuple[str, LinkResolver] | None:
+    for name, resolver in resolvers:
+        try:
+            if resolver.handles(link):
+                return name, resolver
+        except Exception:  # user plugin code: just not responsible then
+            logger.exception("link_resolver_handles_failed", resolver=name)
+    return None
+
+
+async def resolve_link(session: AsyncSession, registry: DownloadPluginRegistry, link: str) -> str:
+    """The link after every responsible resolver had its turn (also chains,
+    up to a few steps). Unchanged if none is responsible."""
+    resolvers = await _resolvers(session, registry)
+    try:
+        for _ in range(MAX_RESOLVE_STEPS):
+            match = _handled_by(resolvers, link)
+            if match is None:
+                break
+            name, resolver = match
+            try:
+                resolved = (await asyncio.wait_for(resolver.resolve(link), timeout=60)).strip()
+            except PluginError as exc:
+                raise DownloadError(f"{name}: {exc}") from exc
+            except TimeoutError as exc:
+                raise DownloadError(f"{name}: Zeitüberschreitung beim Auflösen") from exc
+            except Exception as exc:  # user plugin code
+                logger.exception("link_resolver_failed", resolver=name)
+                raise DownloadError(f"{name}: {type(exc).__name__}: {exc}") from exc
+            if not resolved or resolved == link:
+                break
+            logger.info("link_resolved", resolver=name)
+            link = resolved
+    finally:
+        for _, resolver in resolvers:
+            await resolver.close()
+    return link
+
+
+async def _mark_resolvable(session: AsyncSession, registry: DownloadPluginRegistry, outcome: SearchOutcome) -> None:
+    """Results meant for the browser can be sent directly when a resolver
+    takes care of their link."""
+    if not any(r.result.needs_browser for r in outcome.results):
+        return
+    resolvers = await _resolvers(session, registry)
+    try:
+        for r in outcome.results:
+            if r.result.needs_browser and r.result.kind == "download" and _handled_by(resolvers, r.result.link):
+                r.result.needs_browser = False
+    finally:
+        for _, resolver in resolvers:
+            await resolver.close()
+
+
 async def search(session: AsyncSession, registry: DownloadPluginRegistry, target: Target) -> SearchOutcome:
     """Asks every enabled search source at once. One failing or slow source
     doesn't cost the others' results -- its error is reported next to
@@ -362,6 +434,7 @@ async def search(session: AsyncSession, registry: DownloadPluginRegistry, target
             await plugin.close()
 
     await asyncio.gather(*(run(integration) for integration in sources))
+    await _mark_resolvable(session, registry, outcome)
     return outcome
 
 
@@ -387,6 +460,7 @@ async def releases(
     finally:
         await plugin.close()
     outcome.results.extend(SourceResult(source_name=integration.name, result=r) for r in results)
+    await _mark_resolvable(session, registry, outcome)
     return outcome
 
 
@@ -421,6 +495,7 @@ async def send(
     link = link.strip()
     if not link:
         raise DownloadError("Kein Link angegeben")
+    link = await resolve_link(session, registry, link)
     integration = await session.get(DownloadIntegration, client_integration_id)
     if integration is None:
         raise DownloadError("Download-Client nicht gefunden")

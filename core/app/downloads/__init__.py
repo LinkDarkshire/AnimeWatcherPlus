@@ -1,10 +1,12 @@
-"""Download clients and search sources. Plugins import from here."""
+"""Download clients, search sources and link resolvers. Plugins import from here."""
 
 from app.downloads.base import (
     DEFAULT_STRIP_WORDS,
     DownloadClient,
     DownloadClientError,
     DownloadStatus,
+    LinkResolver,
+    LinkResolverError,
     NothingFound,
     PluginError,
     SearchQuery,
@@ -24,6 +26,8 @@ __all__ = [
     "DownloadClientError",
     "DownloadStatus",
     "HtmlSiteSource",
+    "LinkResolver",
+    "LinkResolverError",
     "NothingFound",
     "PluginError",
     "SearchQuery",

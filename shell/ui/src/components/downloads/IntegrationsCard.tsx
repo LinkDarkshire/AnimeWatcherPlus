@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { useT } from "@/i18n/I18nContext"
+import { KIND_LABELS } from "@/lib/pluginKinds"
 
 /** Setup for download clients and search sources. The forms are generated
  * from each plugin's declared settings, so a plugin dropped into the
@@ -70,7 +71,7 @@ export function IntegrationsCard() {
             <option value="">{t("downloads.addPlaceholder")}</option>
             {plugins.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name} ({p.kind === "client" ? t("downloads.kindClient") : t("downloads.kindSource")}
+                {p.name} ({t(KIND_LABELS[p.kind])}
                 {p.builtin ? `, ${t("downloads.builtin")}` : ""})
               </option>
             ))}
@@ -120,7 +121,7 @@ function IntegrationRow({
             {integration.name}
           </span>
           <Badge variant="outline">
-            {integration.kind === "source" ? t("downloads.kindSource") : t("downloads.kindClient")}
+            {t(KIND_LABELS[integration.kind ?? "client"])}
           </Badge>
           <span className="truncate text-xs text-[hsl(var(--muted-foreground))]">
             {plugin ? plugin.name : t("downloads.pluginMissing")}

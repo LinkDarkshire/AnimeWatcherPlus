@@ -245,7 +245,7 @@ export interface WishlistCandidate {
   on_wishlist: boolean
 }
 
-export type DownloadPluginKind = "client" | "source"
+export type DownloadPluginKind = "client" | "source" | "resolver"
 
 export interface PluginSettingField {
   key: string
