@@ -99,6 +99,10 @@ def anime_dir_for(path: Path, folder_root: Path) -> Path | None:
 
 
 def _directory_signature(anime_dir: Path) -> tuple[int, float]:
+    if anime_dir.is_file():
+        # A loose file straight in the folder root (see _settle_loose_file).
+        stat = anime_dir.stat()
+        return stat.st_size, stat.st_mtime
     total_size = 0
     max_mtime = 0.0
     for f in anime_dir.rglob("*"):
@@ -239,9 +243,21 @@ class ScannerService:
                 else:
                     stable_count = 0
                     last_sig = sig
+            if await asyncio.to_thread(anime_dir.is_file):
+                self._settle_loose_file(folder, anime_dir)
+                return
             await self._process_anime_dir(folder, anime_dir)
         except asyncio.CancelledError:
             pass
+
+    def _settle_loose_file(self, folder: Folder, file: Path) -> None:
+        """A finished video file straight in a download folder's root (e.g.
+        from JDownloader without a package subfolder): only the full scan
+        groups such files into an anime directory, so it runs now instead
+        of on the next manual rescan."""
+        if folder.type != "download" or file.suffix.lower() not in VIDEO_EXTENSIONS:
+            return
+        self._job_queue.enqueue("scan", partial(self.full_scan_folder, folder))
 
     async def full_scan_folder(self, folder: Folder) -> None:
         root = Path(folder.path)
