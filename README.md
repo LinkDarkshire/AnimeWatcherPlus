@@ -61,6 +61,16 @@ mehrere PCs und die Android-App darauf zu.
   Start auf neue Versionen in den GitHub Releases. Unter Linux als AppImage,
   das ohne Installation läuft.
 
+## Neu in 0.3.3
+
+- **Plugins können den Server nicht mehr einfrieren:** Jeder Aufruf eines
+  Download-Plugins (Suche, Senden, Fortschritt, Link-Auflösen, …) läuft
+  abgeschottet mit Zeitlimit. Ein Plugin, das blockiert oder hängt, kostet
+  nur sein eigenes Ergebnis – die App bleibt bedienbar.
+- **AppImage:** „Im Browser öffnen“ und „Ordner öffnen“ funktionieren
+  zuverlässig (Browser und Dateimanager starten ohne die Umgebung des
+  AppImage).
+
 ## Neu in 0.3.2
 
 - **Link-Auflöser (neu in 0.3.2):** neue Plugin-Art neben Download-Clients
@@ -330,6 +340,8 @@ Selbst bauen (im Distrobox-Container; die Toolchain landet in `~/Android`):
 ```
 
 ## Release erstellen
+
+**Schritt für Schritt (Kurzanleitung): [docs/RELEASE.md](docs/RELEASE.md)**
 
 Releases baut GitHub automatisch (`.github/workflows/release.yml`): den
 Windows-Installer und das Linux-AppImage, beide signiert für den

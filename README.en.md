@@ -58,6 +58,14 @@ Android app.
   Releases for new versions at startup. On Linux as an AppImage that runs
   without installation.
 
+## New in 0.3.3
+
+- **Plugins can no longer freeze the server:** every download plugin call
+  (search, send, progress, link resolving, …) runs isolated with a time
+  limit; a plugin that blocks or hangs only costs its own result.
+- **AppImage:** "open in browser" and "open folder" work reliably (browser
+  and file manager start without the AppImage's environment).
+
 ## New in 0.3.2
 
 - **Link resolvers (new in 0.3.2):** a new plugin kind next to download
