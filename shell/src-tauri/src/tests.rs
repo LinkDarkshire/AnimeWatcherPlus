@@ -45,6 +45,18 @@ fn pairing_proof_matches_the_server() {
 }
 
 #[test]
+fn update_endpoint_for_one_version() {
+    let latest = "https://github.com/o/r/releases/latest/download/latest.json";
+    assert_eq!(
+        crate::app_update::tagged_endpoint(latest, "0.3.1").unwrap(),
+        "https://github.com/o/r/releases/download/v0.3.1/latest.json"
+    );
+    assert!(crate::app_update::tagged_endpoint(latest, "0.3.1/../x").is_err());
+    assert!(crate::app_update::tagged_endpoint(latest, "").is_err());
+    assert!(crate::app_update::tagged_endpoint("https://example/other.json", "0.3.1").is_err());
+}
+
+#[test]
 fn query_token_is_removed_before_forwarding() {
     assert_eq!(proxy::query_without_token(None), "");
     assert_eq!(proxy::query_without_token(Some("token=x")), "");

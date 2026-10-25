@@ -26,6 +26,7 @@ from app.api import (
     settings_api,
     sort_queue,
     tags,
+    updates,
     wishlist,
     ws,
 )
@@ -235,6 +236,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(wishlist.router, dependencies=[protected])
     app.include_router(downloads.router, dependencies=[protected])
     app.include_router(anidb.router, dependencies=[protected])
+    app.include_router(updates.router)
     app.include_router(ws.router)
     app.include_router(auth_api.router)
     app.include_router(auth_api.devices_router)

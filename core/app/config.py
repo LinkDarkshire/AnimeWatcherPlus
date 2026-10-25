@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     server_name: str = "AnimeWatcherPlus"
     # Extra allowed browser origins, comma separated (the app's own are built in).
     cors_origins: str = ""
+    # Where releases are published -- server mode tells admins about a newer
+    # server version from here (owner/repository on GitHub).
+    release_repo: str = "LinkDarkshire/AnimeWatcherPlus"
 
     anidb_client_name: str = "animewatcherplus"
     anidb_client_version: int = 1
