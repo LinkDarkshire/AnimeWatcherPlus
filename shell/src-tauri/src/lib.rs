@@ -24,12 +24,71 @@ fn generate_token() -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+/// Fonts WebKit must not use. Skia in some WebKitGTK builds (e.g. the one
+/// the AppImage brings along) aborts the page's render process on certain
+/// glyphs of COLRv1 color fonts -- flags and other emoji in Noto's COLRv1
+/// emoji font -- and the app freezes. Those fonts are hidden from the app
+/// (emoji then come from Twemoji or the monochrome Noto Emoji); the rest of
+/// the system's font setup stays as it is.
+#[cfg(target_os = "linux")]
+fn avoid_colrv1_fonts() {
+    const SYSTEM_CONFIG: &str = "/etc/fonts/fonts.conf";
+    if std::env::var_os("FONTCONFIG_FILE").is_some() || !std::path::Path::new(SYSTEM_CONFIG).exists() {
+        return;
+    }
+    let Some(cache) = std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".cache")))
+    else {
+        return;
+    };
+    let file = cache.join("AnimeWatcherPlus").join(FONTS_CONF_NAME);
+    let content = fonts_conf(SYSTEM_CONFIG);
+    let current = std::fs::read_to_string(&file).ok();
+    if current.as_deref() != Some(content.as_str()) {
+        if let Some(parent) = file.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if std::fs::write(&file, &content).is_err() {
+            return;
+        }
+    }
+    std::env::set_var("FONTCONFIG_FILE", &file);
+}
+
+#[cfg(target_os = "linux")]
+const FONTS_CONF_NAME: &str = "fonts-without-colrv1.conf";
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn fonts_conf(system_config: &str) -> String {
+    format!(
+        r#"<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+<!-- Written by AnimeWatcherPlus: the system's font setup without COLRv1
+     color fonts, which crash some WebKit builds. -->
+<fontconfig>
+  <include ignore_missing="yes">{system_config}</include>
+  <selectfont>
+    <rejectfont>
+      <glob>*COLRv1*</glob>
+    </rejectfont>
+  </selectfont>
+</fontconfig>
+"#
+    )
+}
+
 /// Programs the desktop provides (file manager, browser via xdg-open),
 /// started without the AppImage's own environment: its GTK modules, library
 /// and data paths would be inherited by the browser or file manager, which
 /// then often fail to start (links and folders "do nothing").
 fn desktop_command(program: &str) -> Command {
     let mut command = Command::new(program);
+    // Our font setup is for our own web view only (see avoid_colrv1_fonts).
+    #[cfg(target_os = "linux")]
+    if std::env::var("FONTCONFIG_FILE").is_ok_and(|f| f.ends_with(FONTS_CONF_NAME)) {
+        command.env_remove("FONTCONFIG_FILE");
+    }
     for (key, value) in appimage_free_env(std::env::vars()) {
         match value {
             Some(value) => command.env(key, value),
@@ -141,6 +200,8 @@ pub fn run() {
     if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
+    #[cfg(target_os = "linux")]
+    avoid_colrv1_fonts();
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
