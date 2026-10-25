@@ -42,3 +42,7 @@ AnimeWatcherPlus_Technisches_Konzept.md
 # and library contents)
 *.log
 /aniinfo.json
+
+# Own download plugins in development (never committed; the app loads
+# plugins from its data folder, see README)
+core/plugin/

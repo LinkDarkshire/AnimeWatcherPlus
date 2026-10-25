@@ -133,5 +133,9 @@ class TransmissionClient(DownloadClient):
         )
         return {str(t["hashString"]): _transmission_status(t) for t in result.get("torrents") or []}
 
+    async def remove(self, handles: list[str]) -> None:
+        """Removes the finished torrents from Transmission's list, keeping the files."""
+        await self._rpc("torrent-remove", {"ids": handles, "delete-local-data": False})
+
     async def close(self) -> None:
         await self._http.aclose()

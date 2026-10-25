@@ -248,6 +248,7 @@ impl Shell {
             internet_url: None,
             device_id,
             tls_fingerprint: Some(request.tls_fingerprint),
+            folder_mappings: Vec::new(),
         }))
     }
 }
@@ -385,6 +386,23 @@ pub fn server_set_internet_url(shell: State<Shell>, url: Option<String>) -> Resu
     }
     let mut server = shell.config.lock().unwrap().server.clone().ok_or("Kein Server gekoppelt")?;
     server.internet_url = url;
+    shell.set_server(Some(server))
+}
+
+/// How this device reaches the server's folders, for opening them in the
+/// file manager (see FolderMapping).
+#[tauri::command]
+pub fn server_set_folder_mappings(shell: State<Shell>, mappings: Vec<connection::FolderMapping>) -> Result<(), Failure> {
+    let mappings = mappings
+        .into_iter()
+        .map(|m| connection::FolderMapping {
+            server: m.server.trim().to_owned(),
+            local: m.local.trim().to_owned(),
+        })
+        .filter(|m| !m.server.is_empty() && !m.local.is_empty())
+        .collect();
+    let mut server = shell.config.lock().unwrap().server.clone().ok_or("Kein Server gekoppelt")?;
+    server.folder_mappings = mappings;
     shell.set_server(Some(server))
 }
 

@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
-import { api, ApiError, isTauri } from "./client"
+import { api, ApiError, isTauri, openFolder } from "./client"
+import { mapServerPath, type FolderMapping } from "@/lib/folderMapping"
 
 // The app shell's commands for connecting to a server, QR codes and shared
 // posts (shell/src-tauri/src/server.rs).
@@ -14,6 +15,8 @@ export interface ServerConfig {
   device_id: number
   /** The server's own certificate, pinned when pairing. */
   tls_fingerprint: string | null
+  /** How this device reaches the server's folders (e.g. over SMB). */
+  folder_mappings: FolderMapping[]
 }
 
 export interface ShellConnection {
@@ -122,6 +125,7 @@ export const shell = {
     command<T>("server_pairing_call", { method, path, body: body ?? null }),
   qrSvg: (text: string) => command<string>("qr_svg", { text }),
   takeSharedText: () => command<string | null>("take_shared_text"),
+  setFolderMappings: (mappings: FolderMapping[]) => command<void>("server_set_folder_mappings", { mappings }),
 }
 
 export interface SharedPost {
@@ -161,11 +165,24 @@ export function useMe(enabled = true) {
   })
 }
 
-/** Folders can be shown in the file manager only in the desktop app with
- * its own data -- with a server they are on the server, not on this machine. */
-export function useCanOpenFolders(): boolean {
+/** Opening a folder (an anime's, the plugins folder) in the file manager:
+ * in the desktop app with its own data directly; with a server only for
+ * folders this device reaches -- see the folder mappings under "Data
+ * source". `localPath` is null where it can't be opened. */
+export function useFolderOpener() {
   const { data: connection } = useShellConnection()
-  return isTauri() && connection?.mode === "local"
+  const localPath = (path: string): string | null => {
+    if (!isTauri() || !connection || connection.platform !== "desktop") return null
+    if (connection.mode === "local") return path
+    return mapServerPath(path, connection.server?.folder_mappings ?? [])
+  }
+  return {
+    localPath,
+    open: async (path: string) => {
+      const local = localPath(path)
+      if (local) await openFolder(local)
+    },
+  }
 }
 
 export function useIsMobile(): boolean {

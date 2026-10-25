@@ -40,6 +40,7 @@ from app.auth import (
 from app.config import Settings, get_settings
 from app.db.session import session_scope
 from app.downloads.registry import build_registry
+from app.downloads.watch import FinishedDownloadsWatcher
 from app.logging_config import configure_logging
 from app.providers.anidb import AniDBProvider
 from app.providers.anidb_activity import anidb_status, waiting_counts
@@ -164,6 +165,8 @@ async def lifespan(app: FastAPI):
         ],
     )
     block_watcher.start()
+    finished_downloads = FinishedDownloadsWatcher(app.state.awp)
+    finished_downloads.start()
 
     if settings.mode == "server":
         await _announce_setup_code(app.state.awp)
@@ -178,6 +181,7 @@ async def lifespan(app: FastAPI):
 
     if parent_watch_task is not None:
         parent_watch_task.cancel()
+    await finished_downloads.stop()
     await block_watcher.stop()
     await scanner.stop()
     await job_queue.stop()

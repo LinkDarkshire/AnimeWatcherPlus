@@ -264,6 +264,8 @@ export interface DownloadPlugin {
   description: string
   builtin: boolean
   settings_schema: PluginSettingField[]
+  /** The file in the plugins folder; null for built-in plugins. */
+  file: string | null
 }
 
 export interface DownloadPluginsResponse {

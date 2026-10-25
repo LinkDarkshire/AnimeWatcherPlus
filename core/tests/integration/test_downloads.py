@@ -368,6 +368,11 @@ class _ProgressClient(DownloadClient):
     async def status(self, handles: list[str]) -> dict:
         return {h: s for h, s in self.statuses.items() if h in handles}
 
+    async def remove(self, handles: list[str]) -> None:
+        self.removed.extend(handles)
+
+    removed: ClassVar[list[str]] = []
+
 
 class _NothingSource(TwoStageSearchSource):
     id = "nothing_source"
@@ -457,3 +462,95 @@ async def test_package_names_drop_characters_folders_cannot_have(db_session) -> 
     target = Target(title="**** Kouhai", titles=[], anidb_id=None, episode=11)
     assert target.package_name == "Kouhai - 11"
     assert Target(title='Doukyo? Micchaku!?', titles=[], anidb_id=None).package_name == "Doukyo Micchaku!"
+
+
+@pytest.mark.asyncio
+async def test_clear_finished_hides_done_downloads_and_tidies_the_client(client, db_session, tmp_path, state) -> None:
+    state.download_plugins.register(_ProgressClient)
+    _ProgressClient.removed = []
+    _ProgressClient.statuses = {
+        "h-https://x/1": DownloadStatus("finished", 1.0),
+        "h-https://x/2": DownloadStatus("seeding", 1.0),
+        "h-https://x/3": DownloadStatus("downloading", 0.3),
+    }
+    anime_id = await _anime_with_episodes(db_session, tmp_path, "Show", 9, [(1, None), (2, None), (3, None)])
+    progress = (await client.post("/api/v1/downloads/integrations", json={"plugin_id": "progress_client", "name": "P"})).json()
+    for episode in (1, 2, 3):
+        await client.post(
+            "/api/v1/downloads/send",
+            json={"client_id": progress["id"], "link": f"https://x/{episode}", "anime_id": anime_id, "episode": episode},
+        )
+
+    cleared = (await client.post("/api/v1/downloads/requests/clear-finished")).json()
+
+    assert cleared == {"hidden": 2, "removed_from_clients": 1, "errors": []}
+    # Seeding torrents stay in the client; only the finished one is removed there.
+    assert _ProgressClient.removed == ["h-https://x/1"]
+    remaining = (await client.get("/api/v1/downloads/active")).json()
+    assert [a["title"] for a in remaining] == ["Show - 03"]
+
+
+@pytest.mark.asyncio
+async def test_finished_download_rescans_its_download_folder_once(client, db_session, tmp_path, state) -> None:
+    from contextlib import asynccontextmanager
+
+    from app.downloads.watch import FinishedDownloadsWatcher
+
+    state.download_plugins.register(_ProgressClient)
+    downloads_dir = tmp_path / "downloads"
+    downloads_dir.mkdir()
+    folder = await FolderRepo(db_session).create(str(downloads_dir), "download", "Downloads")
+    anime_id = await _anime_with_episodes(db_session, tmp_path, "Show", 9, [(1, None)])
+    progress = (await client.post("/api/v1/downloads/integrations", json={"plugin_id": "progress_client", "name": "P"})).json()
+    await client.post(
+        "/api/v1/downloads/send",
+        json={"client_id": progress["id"], "link": "https://x/1", "anime_id": anime_id, "episode": 1},
+    )
+
+    @asynccontextmanager
+    async def sessions():
+        yield db_session
+
+    watcher = FinishedDownloadsWatcher(state, sessions)
+    _ProgressClient.statuses = {"h-https://x/1": DownloadStatus("downloading", 0.5)}
+    assert await watcher.check() == 0
+    assert state.job_queue.enqueue.call_count == 0
+
+    _ProgressClient.statuses = {"h-https://x/1": DownloadStatus("finished", 1.0)}
+    assert await watcher.check() == 1
+    [(kind, job)] = [c.args for c in state.job_queue.enqueue.call_args_list]
+    assert kind == "scan"
+    job()
+    state.scanner.full_scan_folder.assert_called_once()
+    assert state.scanner.full_scan_folder.call_args.args[0].id == folder.id
+
+    # Reported once: the next check finds nothing new.
+    assert await watcher.check() == 0
+    await watcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_plugins_added_while_running_appear_after_reload(client, state) -> None:
+    folder = state.settings.plugins_dir
+    folder.mkdir(parents=True, exist_ok=True)
+    before = (await client.get("/api/v1/downloads/plugins")).json()
+    assert before["plugins_folder"] == str(folder)
+    assert "late_source" not in {p["id"] for p in before["plugins"]}
+
+    (folder / "late.py").write_text(
+        "from app.downloads import SearchSource\n\n"
+        "class Late(SearchSource):\n"
+        "    id = 'late_source'\n"
+        "    name = 'Late'\n\n"
+        "    async def search(self, query):\n"
+        "        return []\n",
+        encoding="utf-8",
+    )
+    (folder / "broken.py").write_text("this is not python", encoding="utf-8")
+
+    after = (await client.post("/api/v1/downloads/plugins/reload")).json()
+
+    late = next(p for p in after["plugins"] if p["id"] == "late_source")
+    assert late["file"] == "late.py" and late["builtin"] is False
+    assert [e["file"] for e in after["load_errors"]] == ["broken.py"]
+    assert all(p["file"] is None for p in after["plugins"] if p["builtin"])

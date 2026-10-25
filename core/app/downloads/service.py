@@ -393,21 +393,20 @@ async def releases(
 # --- Send ------------------------------------------------------------------------
 
 
-async def _destination(session: AsyncSession, folder_id: int | None) -> str | None:
+async def _destination(session: AsyncSession, folder_id: int | None) -> Folder | None:
     """The download folder the files should land in, so the scanner sees
     them. Without an explicit choice: the (first) active download folder."""
     if folder_id is not None:
         folder = await session.get(Folder, folder_id)
         if folder is None or folder.type != "download":
             raise DownloadError("Ziel ist kein Download-Ordner")
-        return folder.path
-    path = await session.scalar(
-        select(Folder.path)
+        return folder
+    return await session.scalar(
+        select(Folder)
         .where(Folder.type == "download", Folder.active.is_(True))
         .order_by(Folder.created_at)
         .limit(1)
     )
-    return path
 
 
 async def send(
@@ -428,11 +427,12 @@ async def send(
     plugin = instantiate(registry, integration)
     if not isinstance(plugin, DownloadClient):
         raise DownloadError(f"'{integration.name}' ist kein Download-Client")
+    destination = await _destination(session, folder_id)
     try:
         if not plugin.accepts(link):
             raise DownloadError(f"'{integration.name}' kann diesen Link nicht verarbeiten")
         handle = await plugin.add(
-            link, destination=await _destination(session, folder_id), package_name=target.package_name
+            link, destination=destination.path if destination else None, package_name=target.package_name
         )
     finally:
         await plugin.close()
@@ -446,6 +446,7 @@ async def send(
         client_name=integration.name,
         client_integration_id=integration.id,
         external_id=handle if isinstance(handle, str) and handle else None,
+        folder_id=destination.id if destination else None,
     )
     session.add(request)
     await session.commit()
@@ -469,15 +470,9 @@ class ActiveDownload:
     status: DownloadStatus
 
 
-async def active_downloads(
-    session: AsyncSession, registry: DownloadPluginRegistry, now: dt.datetime | None = None
-) -> list[ActiveDownload]:
-    """Everything sent in the last two weeks and not hidden, with live
-    progress from its client. One status call per client, for all of its
-    downloads at once; a client that can't be reached marks its downloads
-    as unknown instead of failing the whole list."""
-    now = now or dt.datetime.now(dt.UTC)
-    rows = list(
+async def _recent(session: AsyncSession, now: dt.datetime) -> list[DownloadRequest]:
+    """Everything sent in the last two weeks and not hidden."""
+    return list(
         (
             await session.execute(
                 select(DownloadRequest)
@@ -487,6 +482,29 @@ async def active_downloads(
         ).scalars()
     )
 
+
+async def _with_client(
+    session: AsyncSession, registry: DownloadPluginRegistry, integration_id: int
+) -> tuple[DownloadIntegration | None, DownloadClient | str]:
+    """The configured client, or why there is none."""
+    integration = await session.get(DownloadIntegration, integration_id)
+    if integration is None:
+        return None, "Client wurde entfernt"
+    try:
+        plugin = instantiate(registry, integration)
+    except DownloadError as exc:
+        return integration, str(exc)
+    if not isinstance(plugin, DownloadClient):
+        return integration, "Kein Download-Client"
+    return integration, plugin
+
+
+async def poll_statuses(
+    session: AsyncSession, registry: DownloadPluginRegistry, rows: list[DownloadRequest]
+) -> dict[int, DownloadStatus]:
+    """Live progress for these requests. One status call per client, for all
+    of its downloads at once; a client that can't be reached marks its
+    downloads as unknown instead of failing everything."""
     statuses: dict[int, DownloadStatus] = {}
     by_client: dict[int, list[DownloadRequest]] = {}
     for row in rows:
@@ -500,17 +518,9 @@ async def active_downloads(
             for r in requests:
                 statuses[r.id] = DownloadStatus("unknown", message=message)
 
-        integration = await session.get(DownloadIntegration, integration_id)
-        if integration is None:
-            mark_all("Client wurde entfernt")
-            return
-        try:
-            plugin = instantiate(registry, integration)
-        except DownloadError as exc:
-            mark_all(str(exc))
-            return
-        if not isinstance(plugin, DownloadClient):
-            mark_all("Kein Download-Client")
+        integration, plugin = await _with_client(session, registry, integration_id)
+        if isinstance(plugin, str) or integration is None:
+            mark_all(plugin if isinstance(plugin, str) else "Client wurde entfernt")
             return
         try:
             found = await asyncio.wait_for(plugin.status([r.external_id or "" for r in requests]), timeout=30)
@@ -534,7 +544,16 @@ async def active_downloads(
     # Sequential, not gathered: the clients share this request's DB session.
     for integration_id, requests in by_client.items():
         await poll(integration_id, requests)
+    return statuses
 
+
+async def active_downloads(
+    session: AsyncSession, registry: DownloadPluginRegistry, now: dt.datetime | None = None
+) -> list[ActiveDownload]:
+    """Everything sent in the last two weeks and not hidden, with live
+    progress from its client (also when it runs in a container elsewhere)."""
+    rows = await _recent(session, now or dt.datetime.now(dt.UTC))
+    statuses = await poll_statuses(session, registry, rows)
     return [
         ActiveDownload(
             request_id=row.id,
@@ -547,6 +566,70 @@ async def active_downloads(
         )
         for row in rows
     ]
+
+
+DONE_STATES = ("finished", "seeding")
+
+
+@dataclass
+class ClearResult:
+    hidden: int = 0
+    removed_from_clients: int = 0
+    errors: list[str] = field(default_factory=list)
+
+
+async def clear_finished(session: AsyncSession, registry: DownloadPluginRegistry) -> ClearResult:
+    """Hides every download that is done, and removes the finished ones from
+    their client's list too (seeding torrents stay in the client)."""
+    result = ClearResult()
+    rows = await _recent(session, dt.datetime.now(dt.UTC))
+    statuses = await poll_statuses(session, registry, rows)
+    to_remove: dict[int, list[DownloadRequest]] = {}
+    for row in rows:
+        state = statuses[row.id].state
+        if state not in DONE_STATES:
+            continue
+        row.dismissed = True
+        result.hidden += 1
+        if state == "finished" and row.client_integration_id is not None and row.external_id:
+            to_remove.setdefault(row.client_integration_id, []).append(row)
+    await session.commit()
+
+    for integration_id, requests in to_remove.items():
+        integration, plugin = await _with_client(session, registry, integration_id)
+        if isinstance(plugin, str) or integration is None:
+            continue
+        try:
+            await asyncio.wait_for(plugin.remove([r.external_id or "" for r in requests]), timeout=30)
+            result.removed_from_clients += len(requests)
+        except Exception as exc:  # also user plugin code: the list is cleared regardless
+            logger.warning("download_client_cleanup_failed", client=integration.name, error=str(exc))
+            result.errors.append(f"{integration.name}: {exc}")
+        finally:
+            await plugin.close()
+    logger.info("downloads_cleared", hidden=result.hidden, removed=result.removed_from_clients)
+    return result
+
+
+async def newly_finished(session: AsyncSession, registry: DownloadPluginRegistry) -> list[DownloadRequest]:
+    """Downloads whose client reports them done for the first time; marks
+    them, so each is reported once. Only asks clients when something is
+    still pending."""
+    now = dt.datetime.now(dt.UTC)
+    pending = [
+        row
+        for row in await _recent(session, now)
+        if row.finished_at is None and row.client_integration_id is not None and row.external_id
+    ]
+    if not pending:
+        return []
+    statuses = await poll_statuses(session, registry, pending)
+    done = [row for row in pending if statuses[row.id].state in DONE_STATES]
+    for row in done:
+        row.finished_at = now
+    if done:
+        await session.commit()
+    return done
 
 
 async def dismiss(session: AsyncSession, request_id: int) -> bool:

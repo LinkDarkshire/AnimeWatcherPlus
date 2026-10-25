@@ -225,7 +225,22 @@ Bibliothek übertragen.
    `/media/Anime` (Typ *Content*), ggf. `/media/Downloads` (Typ
    *Download*).
 
-### 3.3 Zurück zur lokalen Bibliothek
+### 3.3 Ordner des Servers öffnen (optional)
+
+„Ordner öffnen“ (bei einem Anime, beim Plugin-Ordner) geht mit dem Server,
+wenn dieser PC die Ordner erreicht – z. B. über eine SMB-Freigabe des NAS.
+Unter **Einstellungen → Datenquelle → Server-Ordner auf diesem PC** je
+Zeile eintragen, wie der Server den Ordner nennt und wie dieser PC ihn
+erreicht:
+
+| Server | Linux | Windows |
+|---|---|---|
+| `/media/Anime` | `smb://nas/anime` | `\\nas\anime` |
+| `/data` | `smb://nas/docker/animewatcherplus/data` | `\\nas\docker\animewatcherplus\data` |
+
+`/data` ist der Datenordner des Servers – darin liegen die Plugins.
+
+### 3.4 Zurück zur lokalen Bibliothek
 
 **Einstellungen → Datenquelle → Zurück zur lokalen Bibliothek…** Auf Wunsch
 nimmt die App die Bibliothek vom Server mit (dann wieder Pfade zuordnen, nur
@@ -347,6 +362,18 @@ der Client auf einem anderen Gerät oder in einem anderen Container, trägst
 du dort den Pfad aus seiner Sicht ein – gemeint ist aber derselbe Ordner.
 Mehr dazu und zu eigenen Such-Plugins im
 [README](../README.md#downloads--eigene-plugins).
+
+Ist ein Download fertig, durchsucht die App den Download-Ordner von selbst
+neu (und ein paar Minuten später noch einmal, falls der Client noch
+entpackt) – die Folge steht dann gleich unter *Abfragen* zum Einsortieren
+bereit. **Fertige ausblenden** auf der Download-Seite räumt die Liste auf
+und entfernt fertige Downloads auch aus JDownloader bzw. dem Torrent-Client
+(die Dateien bleiben; Torrents, die noch seeden, bleiben im Client).
+
+**Eigene Plugins mit Server:** Sie liegen auf dem Server in
+`~/animewatcherplus/data/plugins`. Nach dem Ablegen unter *Einstellungen →
+Download-Plugins* auf **Neu laden** klicken – dort steht auch, ob und warum
+eine Datei nicht geladen werden konnte.
 
 ---
 

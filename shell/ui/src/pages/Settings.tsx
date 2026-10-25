@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { TitleOrderPicker } from "@/components/TitleOrderPicker"
 import { DataSourceSection } from "@/components/DataSourceSection"
 import { DevicesSection } from "@/components/DevicesSection"
+import { PluginsSection } from "@/components/PluginsSection"
 import { DEFAULT_TITLE_ORDER, normalizeTitleOrder, type TitleVariant } from "@/lib/titleOrder"
 import { useLanguage, useT } from "@/i18n/I18nContext"
 import { LANGUAGES, type Language } from "@/i18n/translations"
@@ -104,6 +105,7 @@ export function Settings() {
 
       <DataSourceSection />
       <DevicesSection />
+      <PluginsSection />
 
       <Card>
         <CardContent className="space-y-3 p-4">

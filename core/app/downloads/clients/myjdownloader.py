@@ -323,5 +323,29 @@ class MyJDownloaderClient(DownloadClient):
             logger.debug("myjd_status_unmatched", packages=list(packages_by_name)[:20])
         return found
 
+    async def remove(self, handles: list[str]) -> None:
+        """Removes the finished downloads from JDownloader's download list
+        (removeLinks never touches the files on disk)."""
+        listing = {"maxResults": -1, "startAt": 0}
+        session = await self._session()
+        try:
+            device_id = await self._with_device(session)
+            packages = await session.call(device_id, "/downloadsV2/queryPackages", [listing]) or []
+            links = await session.call(device_id, "/downloadsV2/queryLinks", [{**listing, "url": True}]) or []
+            packages_by_name = {_name_key(p.get("name")): p for p in packages}
+            links_by_url = {_url_key(link.get("url")): link for link in links if link.get("url")}
+            link_ids: list[int] = []
+            package_ids: list[int] = []
+            for handle in handles:
+                name, link = _parse_handle(handle)
+                if link and _url_key(link) in links_by_url and "uuid" in links_by_url[_url_key(link)]:
+                    link_ids.append(links_by_url[_url_key(link)]["uuid"])
+                elif _name_key(name) in packages_by_name and "uuid" in packages_by_name[_name_key(name)]:
+                    package_ids.append(packages_by_name[_name_key(name)]["uuid"])
+            if link_ids or package_ids:
+                await session.call(device_id, "/downloadsV2/removeLinks", [link_ids, package_ids])
+        finally:
+            await session.disconnect()
+
     async def close(self) -> None:
         await self._http.aclose()

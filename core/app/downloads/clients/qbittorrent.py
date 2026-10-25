@@ -135,5 +135,20 @@ class QBittorrentClient(DownloadClient):
                 found[tag] = _qbittorrent_status(torrents[0])
         return found
 
+    async def remove(self, handles: list[str]) -> None:
+        """Removes the finished torrents from qBittorrent's list, keeping the files."""
+        await self._login()
+        hashes: list[str] = []
+        for tag in handles:
+            response = await self._request("GET", "/api/v2/torrents/info", params={"tag": tag})
+            if response.status_code == 200:
+                hashes += [str(t["hash"]) for t in response.json() if t.get("hash")]
+        if hashes:
+            response = await self._request(
+                "POST", "/api/v2/torrents/delete", data={"hashes": "|".join(hashes), "deleteFiles": "false"}
+            )
+            if response.status_code != 200:
+                raise DownloadClientError(f"qBittorrent antwortet mit HTTP {response.status_code}")
+
     async def close(self) -> None:
         await self._http.aclose()

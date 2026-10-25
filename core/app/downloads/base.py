@@ -113,6 +113,11 @@ class DownloadClient(_Plugin):
         Optional -- without it the app shows the download as "unknown"."""
         return {}
 
+    async def remove(self, handles: list[str]) -> None:
+        """Removes these finished downloads from the client's own list, to
+        keep it tidy -- never their files. Optional; only ever called for
+        downloads ``status`` reported as finished."""
+
 
 DownloadState = Literal["queued", "downloading", "paused", "seeding", "finished", "error", "unknown"]
 
