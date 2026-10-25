@@ -77,6 +77,13 @@ fn programs_started_from_the_appimage_get_the_system_environment() {
 }
 
 #[test]
+fn font_setup_keeps_the_system_config_and_hides_colrv1() {
+    let conf = crate::fonts_conf("/etc/fonts/fonts.conf");
+    assert!(conf.contains(r#"<include ignore_missing="yes">/etc/fonts/fonts.conf</include>"#));
+    assert!(conf.contains("<glob>*COLRv1*</glob>"));
+}
+
+#[test]
 fn query_token_is_removed_before_forwarding() {
     assert_eq!(proxy::query_without_token(None), "");
     assert_eq!(proxy::query_without_token(Some("token=x")), "");
