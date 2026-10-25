@@ -255,6 +255,10 @@ class DownloadRequest(Base):
     # its client first reported it finished.
     folder_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # "sent" once the client has it; "pending" while a link resolver works on
+    # the link in the background; "failed" (with the reason) if that failed.
+    handover: Mapped[str] = mapped_column(String, default="sent", server_default="sent")
+    handover_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

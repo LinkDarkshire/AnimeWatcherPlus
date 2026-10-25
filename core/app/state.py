@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.downloads.registry import DownloadPluginRegistry, build_registry
@@ -24,3 +28,6 @@ class AppState:
     security: SecurityState = field(default_factory=SecurityState)
     # Server mode: looks up the latest release for admins (made on first use).
     release_checker: ReleaseChecker | None = None
+    # Database sessions for background work outside a request (tests point
+    # this at their own database). None: the app's database.
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] | None = None

@@ -119,7 +119,7 @@ class DownloadClient(_Plugin):
         downloads ``status`` reported as finished."""
 
 
-DownloadState = Literal["queued", "downloading", "paused", "seeding", "finished", "error", "unknown"]
+DownloadState = Literal["resolving", "queued", "downloading", "paused", "seeding", "finished", "error", "unknown"]
 
 
 @dataclass

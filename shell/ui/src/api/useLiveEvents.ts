@@ -187,6 +187,10 @@ export function useLiveEvents() {
         case "scan.progress":
           invalidate("folders")
           break
+        case "downloads.updated":
+          // A link resolved in the background reached its client (or failed).
+          invalidate("downloads-active", "downloads-wanted")
+          break
         case "downloads.finished":
           // The download folder is being rescanned; the new file turns up
           // for sorting and renaming through the scan's own events.
