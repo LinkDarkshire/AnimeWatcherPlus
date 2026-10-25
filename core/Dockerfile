@@ -13,10 +13,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     AWP_DATA_DIR=/data
 
 WORKDIR /app
+ARG WITH_RESOLVERS=1
 COPY pyproject.toml alembic.ini run.py ./
 COPY app ./app
 COPY alembic ./alembic
-RUN pip install --no-cache-dir . \
+RUN if [ "$WITH_RESOLVERS" = "1" ]; then \
+      pip install --no-cache-dir ".[resolvers]"; \
+    else \
+      pip install --no-cache-dir .; \
+    fi \
     && mkdir -p /data /media
 
 # 8784: API -- devices in the LAN connect to it directly, from the internet

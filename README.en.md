@@ -58,6 +58,27 @@ Android app.
   Releases for new versions at startup. On Linux as an AppImage that runs
   without installation.
 
+## New in 0.3.2
+
+- **Link resolvers (new in 0.3.2):** a new plugin kind next to download
+  clients and search sources. A resolver turns an intermediate link (e.g. a
+  short link) into the final one before it goes to the download client;
+  results that would otherwise need the browser can be sent directly.
+  Template: `core/plugin_examples/link_resolver_template.py` (follows the
+  redirects of bit.ly, t.co & co.).
+- **Updates through the server:** with a server, updating the server is
+  enough – desktop apps install exactly its version when they connect,
+  Android offers the matching APK.
+- **Downloads:** "hide finished" also removes finished downloads from
+  JDownloader/qBittorrent/Transmission (files stay); a finished download
+  triggers a rescan of the download folder.
+- **Plugins:** overview in Settings with load errors, reload without restart.
+- Open server folders via an SMB share (per-device mapping).
+- New app icon; on Linux the binary is `animewatcherplus` instead of `app`.
+- Fixed: the local core kept running after the app restarted.
+
+(0.3.1 was not released; everything since 0.3.0 is listed here.)
+
 ## New in 0.3.0
 
 - **Server mode:** the library as a Docker container on the NAS, where the

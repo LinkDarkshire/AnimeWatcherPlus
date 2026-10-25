@@ -35,6 +35,10 @@ a = Analysis(
         # BeautifulSoup only imports its CSS selector engine when it's first
         # needed; download plugins built on HtmlSiteSource rely on it.
         "soupsieve",
+        # Optional resolvers extra (curl_cffi). Safe if the package is absent:
+        # PyInstaller skips missing modules listed here only if collected;
+        # install curl_cffi before building if you want ouo-style resolvers.
+        "curl_cffi",
     ],
     hookspath=[],
     hooksconfig={},
