@@ -732,3 +732,28 @@ async def test_pending_identifications_can_be_requeued(scanner_env, tmp_path) ->
     assert await scanner.enqueue_pending_identifications() == 2
     new_jobs = list(scanner._job_queue.jobs.values())[before:]
     assert [job.job_type for job in new_jobs] == ["identify", "identify"]
+
+
+@pytest.mark.asyncio
+async def test_loose_file_event_in_download_root_gets_scanned(scanner_env, tmp_path) -> None:
+    """A file a client drops straight into the download root must show up
+    without a manual rescan: the file event leads to a full scan, which
+    groups it into its own directory."""
+    scanner, session = scanner_env
+    root = tmp_path / "downloads"
+    root.mkdir()
+    folder = await FolderRepo(session).create(str(root), "download", "Downloads")
+    loose = root / "No_Waifu_No_Life_02_ENG.mkv"
+    loose.write_bytes(b"x" * 10)
+
+    await scanner._debounce(folder, loose)
+
+    animes: list[Anime] = []
+    for _ in range(50):
+        result = await session.execute(select(Anime).where(Anime.folder_id == folder.id))
+        animes = result.scalars().all()
+        if animes:
+            break
+        await asyncio.sleep(0.05)
+
+    assert [a.directory_path for a in animes] == [str(root / "No Waifu No Life")]

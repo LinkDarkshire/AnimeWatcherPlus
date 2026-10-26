@@ -1,7 +1,9 @@
 """Once a download is done, its download folder is scanned again -- right
 away, so the new episode shows up for sorting and renaming without waiting
 for the next scan, and once more a little later, for clients that unpack
-archives after finishing (JDownloader)."""
+archives after finishing (JDownloader). Every download folder is also
+rescanned now and then, for what neither a client nor a file event
+reports (a network share, JDownloader via Folder Watch)."""
 
 from __future__ import annotations
 
@@ -44,12 +46,30 @@ class FinishedDownloadsWatcher:
                 task.cancel()
 
     async def _run(self) -> None:
+        since_rescan = 0.0
         while True:
             await asyncio.sleep(CHECK_INTERVAL_S)
             try:
                 await self.check()
             except Exception:
                 logger.exception("finished_downloads_check_failed")
+            since_rescan += CHECK_INTERVAL_S
+            interval = self._state.settings.download_rescan_interval_s
+            if interval > 0 and since_rescan >= interval:
+                since_rescan = 0.0
+                try:
+                    await self.rescan_all()
+                except Exception:
+                    logger.exception("download_folders_rescan_failed")
+
+    async def rescan_all(self) -> int:
+        """Queues a scan of every active download folder; returns how many."""
+        async with self._sessions() as session:
+            query = select(Folder).where(Folder.type == "download", Folder.active.is_(True))
+            folders = list((await session.execute(query)).scalars())
+        for folder in folders:
+            self._rescan(folder)
+        return len(folders)
 
     async def check(self) -> int:
         """Returns how many downloads were newly found finished."""

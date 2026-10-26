@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     # Short pause between anime directories during a background full scan,
     # so the scan never slows down the UI's own requests.
     scan_yield_interval_s: float = 0.1
+    # Download folders are scanned again this often (0: never). Changes on
+    # a network share (SMB/NFS) written by another machine trigger no file
+    # events, and some clients report no progress -- this catches both.
+    download_rescan_interval_s: float = 15 * 60
 
     @property
     def db_path(self) -> Path:

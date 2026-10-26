@@ -531,6 +531,28 @@ async def test_finished_download_rescans_its_download_folder_once(client, db_ses
 
 
 @pytest.mark.asyncio
+async def test_rescan_all_queues_every_active_download_folder(db_session, tmp_path, state) -> None:
+    from contextlib import asynccontextmanager
+
+    from app.downloads.watch import FinishedDownloadsWatcher
+
+    repo = FolderRepo(db_session)
+    downloads = await repo.create(str(tmp_path / "dl"), "download", "Downloads")
+    await repo.create(str(tmp_path / "lib"), "content", "Library")
+
+    @asynccontextmanager
+    async def sessions():
+        yield db_session
+
+    watcher = FinishedDownloadsWatcher(state, sessions)
+    assert await watcher.rescan_all() == 1
+    [(kind, job)] = [c.args for c in state.job_queue.enqueue.call_args_list]
+    assert kind == "scan"
+    job()
+    assert state.scanner.full_scan_folder.call_args.args[0].id == downloads.id
+
+
+@pytest.mark.asyncio
 async def test_plugins_added_while_running_appear_after_reload(client, state) -> None:
     folder = state.settings.plugins_dir
     folder.mkdir(parents=True, exist_ok=True)
