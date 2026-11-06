@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { isTauri } from "@/api/client"
-import { useMe, useShellConnection } from "@/api/shell"
+import { useMe, useOnServer, useShellConnection } from "@/api/shell"
 import { Card, CardContent } from "@/components/ui/card"
 import { useT } from "@/i18n/I18nContext"
 
@@ -16,7 +16,7 @@ export function VersionsSection() {
     enabled: isTauri(),
     staleTime: Infinity,
   })
-  const onServer = connection?.mode === "server"
+  const onServer = useOnServer()
 
   return (
     <Card>
@@ -30,7 +30,9 @@ export function VersionsSection() {
             </>
           )}
           <dt className="text-[hsl(var(--muted-foreground))]">
-            {onServer ? `${t("versions.server")} (${connection?.server?.name ?? ""})` : t("versions.localCore")}
+            {onServer
+              ? `${t("versions.server")} (${connection?.server?.name ?? me.data?.server_name ?? ""})`
+              : t("versions.localCore")}
           </dt>
           <dd className="font-mono">{me.isError ? t("versions.unknown") : (me.data?.server_version ?? "…")}</dd>
         </dl>

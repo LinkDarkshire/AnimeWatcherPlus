@@ -179,7 +179,8 @@ jobs:
 
       - uses: docker/build-push-action@v6
         with:
-          context: core
+          context: .
+          file: core/Dockerfile
           push: true
           tags: |
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}

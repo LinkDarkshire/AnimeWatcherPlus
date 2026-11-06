@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { NavLink, Route, Routes, useLocation } from "react-router-dom"
 import {
   ClipboardCheck,
@@ -21,7 +22,9 @@ import { Settings } from "@/pages/Settings"
 import { Wishlist } from "@/pages/Wishlist"
 import { Downloads } from "@/pages/Downloads"
 import { useLiveEvents } from "@/api/useLiveEvents"
-import { shell, useShellConnection } from "@/api/shell"
+import { shell, useMe, useShellConnection } from "@/api/shell"
+import { ApiError, isWebUi, onLoginRequired } from "@/api/client"
+import { WebLogin } from "@/components/WebLogin"
 import { MobileOnboarding } from "@/components/MobileOnboarding"
 import { ServerStatusBanner } from "@/components/ServerStatusBanner"
 import { VersionNotice } from "@/components/VersionNotice"
@@ -48,6 +51,32 @@ interface NavItem {
 }
 
 function App() {
+  if (isWebUi()) return <WebApp />
+  return <ShellApp />
+}
+
+/** The web interface: the login page until the browser is signed in. */
+function WebApp() {
+  const queryClient = useQueryClient()
+  const me = useMe()
+  const [loginRequired, setLoginRequired] = useState(false)
+  useEffect(() => onLoginRequired(() => setLoginRequired(true)), [])
+  const signedOut = loginRequired || (me.error instanceof ApiError && me.error.status === 401)
+  if (signedOut) {
+    return (
+      <WebLogin
+        onDone={() => {
+          setLoginRequired(false)
+          queryClient.resetQueries()
+        }}
+      />
+    )
+  }
+  if (me.isPending) return null
+  return <MainApp mobile={false} />
+}
+
+function ShellApp() {
   const { data: connection, isPending } = useShellConnection()
   // In the app, wait for the shell to say where the data is.
   if (shell.available() && isPending) return null

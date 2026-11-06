@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from alembic import command
-from app import __version__
+from app import __version__, web_ui
 from app.api import (
     admin,
     anidb,
@@ -27,6 +27,7 @@ from app.api import (
     sort_queue,
     tags,
     updates,
+    web_auth,
     wishlist,
     ws,
 )
@@ -243,6 +244,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin.router)
     if settings.mode == "server":
         app.include_router(pairing.router)
+        app.include_router(web_auth.router)
+        # Last: everything no route above claims goes to the page.
+        if settings.web_ui_dir is not None:
+            web_ui.mount(app, settings.web_ui_dir)
 
     return app
 

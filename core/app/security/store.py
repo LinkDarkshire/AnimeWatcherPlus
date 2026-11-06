@@ -39,9 +39,13 @@ def codes_match(given: str, expected: str) -> bool:
 
 @dataclass
 class Session:
-    device_id: int
+    """Who is behind a request: a paired device, or a web account (a
+    browser logged in with user name and password, see security/web)."""
+
+    device_id: int | None
     is_admin: bool
     expires_at: float
+    account_id: int | None = None
 
 
 @dataclass

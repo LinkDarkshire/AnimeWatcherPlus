@@ -12,6 +12,27 @@ export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
 }
 
+/** The web interface: this UI served by the server itself, opened in a
+ * browser. It logs in with user name and password; the session lives in an
+ * HttpOnly cookie the browser sends along on its own. */
+export function isWebUi(): boolean {
+  return !isTauri() && import.meta.env.VITE_WEB_UI === "1"
+}
+
+/** Requests that change something carry this header: the server refuses
+ * them from the web interface without it (a foreign page can't add it). */
+const WEB_HEADERS: Record<string, string> = { "X-AWP-Web": "1" }
+
+type Listener = () => void
+const loginListeners = new Set<Listener>()
+
+/** The web interface's session ended (logged out, expired, password
+ * changed elsewhere): the app shows the login page again. */
+export function onLoginRequired(listener: Listener): () => void {
+  loginListeners.add(listener)
+  return () => loginListeners.delete(listener)
+}
+
 /** Reveals a local directory in the OS file manager. Only works inside the
  * Tauri desktop shell -- there's no browser equivalent, so callers should
  * hide/disable the triggering UI when `isTauri()` is false. */
@@ -42,6 +63,8 @@ async function resolveConnection(): Promise<Connection> {
     const info = await invoke<ConnectionInfo>("get_connection_info")
     return { baseUrl: `http://127.0.0.1:${info.port}`, token: info.token }
   }
+  // Same address as the page; the cookie stands in for the token.
+  if (isWebUi()) return { baseUrl: "", token: "" }
   return {
     baseUrl: import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000",
     token: import.meta.env.VITE_API_TOKEN ?? "",
@@ -75,9 +98,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(isWebUi() ? WEB_HEADERS : {}),
       ...init?.headers,
     },
   })
+  if (response.status === 401 && isWebUi() && !path.startsWith("/api/v1/web/login")) {
+    loginListeners.forEach((listener) => listener())
+  }
   if (!response.ok) {
     let detail = response.statusText
     try {
@@ -123,7 +150,7 @@ export async function resolveAssetUrl(path: string): Promise<string> {
 
 export async function wsUrl(): Promise<string> {
   const { baseUrl, token } = await getConnection()
-  const httpUrl = new URL(baseUrl)
+  const httpUrl = new URL(baseUrl || window.location.origin)
   const proto = httpUrl.protocol === "https:" ? "wss:" : "ws:"
   const query = token ? `?token=${encodeURIComponent(token)}` : ""
   return `${proto}//${httpUrl.host}/ws${query}`

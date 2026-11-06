@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import hmac
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, ClassVar
+from urllib.parse import urlsplit
 
-from fastapi import HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.api.deps import get_db
+from app.security import web
 from app.security.store import Session
 
 if TYPE_CHECKING:
@@ -26,6 +31,45 @@ def session_for_token(state: AppState, token: str | None) -> Session | None:
     return state.security.session(token) if token else None
 
 
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def same_origin(headers: Mapping[str, str]) -> bool:
+    """A browser's request comes from a page of this server itself (or
+    names no origin at all, as same-origin GETs may)."""
+    origin = headers.get("origin")
+    if origin is None:
+        return True
+    # Behind a reverse proxy that passes on its own address as Host, the
+    # browser's one comes as X-Forwarded-Host (a page can't set that header
+    # on a browser's cross-site request).
+    hosts = {headers.get("host", ""), *headers.get("x-forwarded-host", "").split(",")}
+    return urlsplit(origin).netloc in {h.strip() for h in hosts if h.strip()}
+
+
+async def web_session(db: AsyncSession, token: str | None) -> Session | None:
+    """The web account behind a browser's session cookie, if valid."""
+    if not token:
+        return None
+    account = await web.account_for_token(db, token)
+    if account is None:
+        return None
+    return Session(device_id=None, is_admin=account.is_admin, expires_at=0.0, account_id=account.id)
+
+
+async def _web_request_session(request: Request, db: AsyncSession) -> Session | None:
+    session = await web_session(db, request.cookies.get(web.COOKIE_NAME))
+    if session is None:
+        return None
+    # The cookie goes along with every request to this server, also ones a
+    # foreign page makes the browser send: changes need the app's header.
+    if request.method not in _SAFE_METHODS and (
+        request.headers.get(web.WEB_HEADER) != "1" or not same_origin(request.headers)
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Anfrage nicht von der Weboberfläche")
+    return session
+
+
 def desktop_token_ok(state: AppState, token: str | None) -> bool:
     expected = state.settings.sidecar_token
     if not expected:
@@ -34,40 +78,47 @@ def desktop_token_ok(state: AppState, token: str | None) -> bool:
     return token is not None and hmac.compare_digest(token, expected)
 
 
-async def require_auth(request: Request) -> None:
+async def require_auth(request: Request, db: AsyncSession = Depends(get_db)) -> None:
     """Guards every API route. Desktop mode: the per-session token the
     desktop shell hands to its UI. Server mode: a short-lived access token a
-    paired device got by signing a challenge with its key."""
+    paired device got by signing a challenge with its key -- or, from the
+    web interface, a browser's session cookie."""
     state = _state(request)
     token = _bearer(request)
     if state.settings.mode != "server":
         if not desktop_token_ok(state, token):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid or missing token")
         return
-    session = session_for_token(state, token)
+    session = session_for_token(state, token) if token else await _web_request_session(request, db)
     if session is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Anmeldung erforderlich")
     request.state.session = session
 
 
-async def require_admin(request: Request) -> None:
-    """Like require_auth, but only admin devices (server mode). The desktop
-    app's own core has a single user, who is its admin."""
-    await require_auth(request)
+async def require_admin(request: Request, db: AsyncSession = Depends(get_db)) -> None:
+    """Like require_auth, but only admins (server mode): admin devices and
+    web accounts. The desktop app's own core has a single user, who is its
+    admin."""
+    await require_auth(request, db)
     session: Session | None = getattr(request.state, "session", None)
     if session is not None and not session.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Nur für Admin-Geräte")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Nur für Admins")
 
 
-async def require_asset_access(request: Request) -> None:
+async def require_asset_access(request: Request, db: AsyncSession = Depends(get_db)) -> None:
     """For URLs an <img> loads, which can't send headers: in server mode the
-    access token comes as ?token=. In desktop mode these stay open as before
-    (the core only listens on 127.0.0.1)."""
+    access token comes as ?token= (or, in the web interface, the cookie goes
+    along). In desktop mode these stay open as before (the core only listens
+    on 127.0.0.1)."""
     state = _state(request)
     if state.settings.mode != "server":
         return
     token = _bearer(request) or request.query_params.get("token")
-    if session_for_token(state, token) is None:
+    if token:
+        allowed = session_for_token(state, token) is not None
+    else:
+        allowed = await web_session(db, request.cookies.get(web.COOKIE_NAME)) is not None
+    if not allowed:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Anmeldung erforderlich")
 
 

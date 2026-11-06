@@ -58,6 +58,18 @@ Android app.
   Releases for new versions at startup. On Linux as an AppImage that runs
   without installation.
 
+## New in 0.3.5
+
+- **Web interface:** the server also serves the apps' interface to a
+  browser (`https://<NAS address>:8784` or through the reverse proxy).
+  Sign in with user name and password; an admin creates the logins under
+  *Settings → Web logins*.
+- **Android: QR scanning no longer crashes.** The release APK closed as soon
+  as the camera started.
+- **Download folders are rescanned on their own:** also for files straight
+  in the download folder, on network shares and with JDownloader via Folder
+  Watch (at least every 15 minutes).
+
 ## New in 0.3.4
 
 - **Linux: no more freezes from emoji.** The WebKit in the AppImage crashed

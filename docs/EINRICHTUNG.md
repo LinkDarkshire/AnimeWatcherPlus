@@ -23,7 +23,7 @@ wechseln, ohne etwas zu verlieren.
 3. [Desktop mit dem Server verbinden](#3-desktop-mit-dem-server-verbinden)
 4. [Android-App](#4-android-app)
 5. [Zugriff von unterwegs (optional)](#5-zugriff-von-unterwegs-optional)
-6. [Weitere Geräte, Geräte entfernen](#6-weitere-geräte-geräte-entfernen)
+6. [Weitere Geräte, Geräte entfernen, Weboberfläche](#6-weitere-geräte-geräte-entfernen)
 7. [Downloads einrichten (optional)](#7-downloads-einrichten-optional)
 8. [Updates und Sicherung](#8-updates-und-sicherung)
 9. [Fehlerbehebung](#9-fehlerbehebung)
@@ -346,9 +346,35 @@ Wichtig sind drei Dinge:
 - **Gerät abmelden:** am Gerät selbst *Einstellungen → Datenquelle →
   Kopplung entfernen* (und am Admin-Gerät widerrufen).
 
-Es gibt keine Passwörter. Jedes Gerät hat einen eigenen Schlüssel, der das
-Gerät nie verlässt (Schlüsselbund des Systems, auf Android im Hardware-
-Keystore).
+Geräte brauchen keine Passwörter. Jedes Gerät hat einen eigenen Schlüssel,
+der das Gerät nie verlässt (Schlüsselbund des Systems, auf Android im
+Hardware-Keystore). Passwörter gibt es nur für die Weboberfläche (6.1).
+
+### 6.1 Weboberfläche (Browser)
+
+Der Server liefert dieselbe Oberfläche wie die Apps auch im Browser aus,
+unter seiner normalen Adresse: im Heimnetz `https://<NAS-Adresse>:8784`,
+von unterwegs über deinen Reverse Proxy (Abschnitt 5).
+
+1. An einem Admin-Gerät unter *Einstellungen → Web-Zugänge* einen
+   **Benutzernamen** und ein **Passwort** (mindestens 8 Zeichen) anlegen.
+   Mit „Admin“ darf der Zugang auch Geräte und weitere Web-Zugänge
+   verwalten.
+2. Die Adresse im Browser öffnen und anmelden. Im Heimnetz warnt der Browser
+   beim ersten Mal vor dem Zertifikat, weil der Server sein eigenes
+   ausstellt. Das ist erwartet: einmal bestätigen. Über den Reverse Proxy
+   gibt es keine Warnung.
+3. Abmelden und das eigene Passwort ändern geht unter *Einstellungen*.
+
+Gut zu wissen:
+
+- Die Anmeldung gilt 30 Tage pro Browser. Ein geändertes Passwort meldet
+  alle anderen Browser dieses Zugangs ab, ein gelöschter Zugang sofort alle.
+- Nach 5 falschen Passwörtern für einen Namen ist die Anmeldung dafür
+  15 Minuten gesperrt (Schutz gegen Raten aus dem Internet).
+- Was nur die Apps können: Ordner im Dateimanager öffnen, Geräte koppeln
+  (das geht nur im Heimnetz über die App) und die Bibliothek zwischen
+  lokal und Server umziehen.
 
 ---
 

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { api, ApiError, isTauri, openFolder } from "./client"
+import { api, ApiError, isTauri, isWebUi, openFolder } from "./client"
 import { mapServerPath, type FolderMapping } from "@/lib/folderMapping"
 
 // The app shell's commands for connecting to a server, QR codes and shared
@@ -84,6 +84,8 @@ export interface Me {
   server_name: string | null
   device_id: number | null
   device_name: string | null
+  /** Signed in through the web interface: the login's user name. */
+  web_username: string | null
   is_admin: boolean
   /** The apps update themselves to this version when connected. */
   server_version: string
@@ -156,6 +158,13 @@ export function useShellConnection() {
     enabled: shell.available(),
     staleTime: Infinity,
   })
+}
+
+/** The library is on a server: the app's server mode, or the web
+ * interface (which is the server). */
+export function useOnServer(): boolean {
+  const { data: connection } = useShellConnection()
+  return isWebUi() || connection?.mode === "server"
 }
 
 /** Who this device is on the server (admin or not). */

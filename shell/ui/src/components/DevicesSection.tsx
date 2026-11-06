@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/api/client"
-import { shell, useMe, useShellConnection, type Device, type JoinRequest, type PairingCode } from "@/api/shell"
+import { shell, useMe, useOnServer, useShellConnection, type Device, type JoinRequest, type PairingCode } from "@/api/shell"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -21,8 +21,7 @@ function errorMessage(error: unknown): string {
 export function DevicesSection() {
   const t = useT()
   const queryClient = useQueryClient()
-  const { data: connection } = useShellConnection()
-  const onServer = connection?.mode === "server"
+  const onServer = useOnServer()
   const me = useMe(onServer)
   const isAdmin = onServer && (me.data?.is_admin ?? false)
   const devices = useQuery({
@@ -76,9 +75,13 @@ export function DevicesSection() {
             </li>
           ))}
         </ul>
-        <Button size="sm" onClick={() => setAdding(true)}>
-          {t("devices.add")}
-        </Button>
+        {/* Pairing goes through the app (the pairing port is LAN only and
+            not part of the web interface). */}
+        {shell.available() && (
+          <Button size="sm" onClick={() => setAdding(true)}>
+            {t("devices.add")}
+          </Button>
+        )}
       </CardContent>
       <AddDeviceDialog
         open={adding}

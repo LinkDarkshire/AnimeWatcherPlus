@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     server_name: str = "AnimeWatcherPlus"
     # Extra allowed browser origins, comma separated (the app's own are built in).
     cors_origins: str = ""
+    # Server mode: the built UI (shell/ui/dist), served as the web interface
+    # on the API port. Unset: no web interface (the server image sets it).
+    web_ui_dir: Path | None = None
     # Where releases are published -- server mode tells admins about a newer
     # server version from here (owner/repository on GitHub).
     release_repo: str = "LinkDarkshire/AnimeWatcherPlus"
