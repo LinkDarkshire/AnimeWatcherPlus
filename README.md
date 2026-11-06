@@ -61,6 +61,19 @@ mehrere PCs und die Android-App darauf zu.
   Start auf neue Versionen in den GitHub Releases. Unter Linux als AppImage,
   das ohne Installation läuft.
 
+## Neu in 0.3.5
+
+- **Weboberfläche:** Der Server liefert die Oberfläche der Apps auch im
+  Browser aus (`https://<NAS-Adresse>:8784` oder über den Reverse Proxy).
+  Anmeldung mit Benutzername und Passwort; die Zugänge legt ein Admin unter
+  *Einstellungen → Web-Zugänge* an. Siehe [Einrichtung, Abschnitt
+  6.1](docs/EINRICHTUNG.md#61-weboberfläche-browser).
+- **Android: QR-Scan stürzt nicht mehr ab.** Die Release-APK beendete sich,
+  sobald die Kamera startete.
+- **Download-Ordner werden von selbst neu gescannt:** auch bei Dateien direkt
+  im Download-Ordner, auf Netzwerkfreigaben und mit JDownloader per Folder
+  Watch (spätestens alle 15 Minuten).
+
 ## Neu in 0.3.4
 
 - **Linux: kein Einfrieren mehr durch Emojis.** Die WebKit-Version im

@@ -277,3 +277,32 @@ class Device(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WebAccount(Base):
+    """A login for the web interface (server mode): user name and password.
+    Only a scrypt hash of the password is stored (see security/passwords)."""
+
+    __tablename__ = "web_account"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String, unique=True)
+    password_hash: Mapped[str] = mapped_column(String)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_login_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WebSession(Base):
+    """A browser logged in to the web interface. The browser holds the token
+    in a cookie; only its SHA-256 is stored, so this table lets nobody in.
+    Kept in the database (unlike the devices' access tokens) so a server
+    restart doesn't log every browser out."""
+
+    __tablename__ = "web_session"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String, unique=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("web_account.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))

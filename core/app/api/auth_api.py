@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import __version__
 from app.api.deps import get_app_state, get_db
 from app.auth import require_admin, require_auth
-from app.db.models import Device
+from app.db.models import Device, WebAccount
 from app.security import devices
 from app.security.keys import auth_message, verify_signature
 from app.security.store import CHALLENGE_TTL_S
@@ -92,6 +92,8 @@ class MeOut(BaseModel):
     server_version: str = __version__
     device_id: int | None = None
     device_name: str | None = None
+    # Logged in through the web interface: the account's user name.
+    web_username: str | None = None
     is_admin: bool
 
 
@@ -103,6 +105,14 @@ async def me(
     current = getattr(request.state, "session", None)
     if current is None:
         return MeOut(mode=state.settings.mode, server_name=state.settings.server_name, is_admin=True)
+    if current.account_id is not None:
+        account = await session.get(WebAccount, current.account_id)
+        return MeOut(
+            mode="server",
+            server_name=state.settings.server_name,
+            web_username=account.username if account else None,
+            is_admin=current.is_admin,
+        )
     device = await session.get(Device, current.device_id)
     return MeOut(
         mode="server",

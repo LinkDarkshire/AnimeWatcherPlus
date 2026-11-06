@@ -1,0 +1,12 @@
+# The image is built from the repository root (docker build -f
+# core/Dockerfile .): only what it needs goes into the build context.
+*
+!core/pyproject.toml
+!core/alembic.ini
+!core/run.py
+!core/app
+!core/alembic
+!shell/ui
+shell/ui/node_modules
+shell/ui/dist
+**/__pycache__
