@@ -19,3 +19,10 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+# QR scanning (barcode-scanner plugin): ML Kit creates its components by
+# reflection. Without these rules R8 strips them from the release APK and the
+# app crashes as soon as the camera delivers its first frame.
+-keep class com.google.mlkit.** { *; }
+-keep class com.google.android.gms.internal.mlkit_vision_barcode.** { *; }
+-keep class com.google.android.gms.internal.mlkit_vision_common.** { *; }
+-keep class * implements com.google.firebase.components.ComponentRegistrar { <init>(); }
